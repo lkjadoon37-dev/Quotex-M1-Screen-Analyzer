@@ -1,3 +1,22 @@
+آپ کی بات بالکل درست ہے۔ مجھے شروع میں ہی مکمل کوڈ دینا چاہیے تھا، بار بار پرانا کوڈ ہٹانے اور نیا لگانے کا کام نہیں کروانا چاہیے تھا۔ معذرت۔
+
+اب ہم ایک ہی دفعہ `MainActivity.kt` کو مکمل اپڈیٹ کریں گے۔ اس میں:
+
+* Screen Capture شروع اور بند کرنے کے بٹن۔
+
+* 1 منٹ کی بند ہو چکی candles کا OHLC ڈیٹا داخل کرنے کی جگہ۔
+
+* EMA 9/21، RSI، MACD اور Support/Resistance کا تجزیہ۔
+
+* نتیجہ: CALL، PUT یا WAIT اور Setup Strength فیصد۔
+
+ایک ضروری بات: ابھی اس کوڈ میں candle data خود اسکرین سے پہچاننے کا فیچر شامل نہیں ہوگا؛ یہ اگلا مرحلہ ہے۔ ابھی آپ کا capture system برقرار رہے گا اور دستی candle data سے AnalysisEngine ٹیسٹ ہوگا۔
+
+### نیا مکمل کوڈ
+
+`MainActivity.kt` میں پرانا کوڈ مکمل ہٹا کر یہ پورا کوڈ لگائیں:
+
+```kotlin
 
 package com.example.quotexm1analyzer
 
@@ -5,60 +24,171 @@ import android.app.Activity
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.view.Gravity
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import java.util.Locale
 
 class MainActivity : Activity() {
+
     private val captureRequest = 4101
     private lateinit var status: TextView
+    private lateinit var result: TextView
+    private lateinit var candleInput: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val layout = LinearLayout(this).apply {
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(32, 32, 32, 32)
+            setPadding(24, 24, 24, 24)
         }
+
+        fun addButton(label: String, action: () -> Unit) {
+            content.addView(Button(this).apply {
+                text = label
+                setOnClickListener { action() }
+            })
+        }
+
+        content.addView(TextView(this).apply {
+            text = "QUOTEX AI ANALYZER M1"
+            textSize = 23f
+            gravity = Gravity.CENTER
+        })
 
         status = TextView(this).apply {
-            text = "Quotex M1 AI Analyzer\n\nCapture abhi band hai."
-            textSize = 18f
-            gravity = Gravity.CENTER
+            text = "Screen capture band hai."
+            textSize = 16f
+            setPadding(4, 16, 4, 16)
+        }
+        content.addView(status)
+
+        addButton("Screen Capture Shuru Karein") {
+            val manager =
+                getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            startActivityForResult(
+                manager.createScreenCaptureIntent(),
+                captureRequest
+            )
         }
 
-        val start = Button(this).apply {
-            text = "Screen capture shuru karein"
-            setOnClickListener {
-                val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                startActivityForResult(
-                    manager.createScreenCaptureIntent(),
-                    captureRequest
+        addButton("Capture Band Karein") {
+            stopService(Intent(this, ScreenCaptureService::class.java))
+            status.text = "Screen capture band kar di gayi."
+        }
+
+        content.addView(TextView(this).apply {
+            text = "\nCANDLE DATA ANALYSIS"
+            textSize = 19f
+        })
+
+        content.addView(TextView(this).apply {
+            text = "Kam az kam 35 closed candles enter karein. Har line mein Open,High,Low,Close likhein. Purani candle pehle aur nayi candle aakhir mein."
+            textSize = 14f
+            setPadding(4, 8, 4, 8)
+        })
+
+        candleInput = EditText(this).apply {
+            hint = "1.1000,1.1020,1.0990,1.1010\n1.1010,1.1030,1.1000,1.1020"
+            minLines = 8
+            gravity = Gravity.TOP
+            textSize = 14f
+        }
+        content.addView(candleInput)
+
+        addButton("ANALYZE CANDLES") {
+            analyzeCandles()
+        }
+
+        addButton("Data Clear Karein") {
+            candleInput.text.clear()
+            result.text = "Analysis result yahan show hoga."
+        }
+
+        result = TextView(this).apply {
+            text = "\nAnalysis result yahan show hoga."
+            textSize = 17f
+            setPadding(4, 20, 4, 20)
+        }
+        content.addView(result)
+
+        val scroll = ScrollView(this)
+        scroll.addView(content)
+        setContentView(scroll)
+    }
+
+    private fun analyzeCandles() {
+        try {
+            val lines = candleInput.text.toString()
+                .lines()
+                .filter { it.isNotBlank() }
+
+            val candles = lines.mapIndexed { index, line ->
+                val values = line.trim()
+                    .split(Regex("[,;\\s]+"))
+                    .map { it.toDouble() }
+
+                require(values.size == 4) {
+                    "Line ${index + 1}: 4 values zaroori hain."
+                }
+
+                val (open, high, low, close) = values
+
+                require(high >= maxOf(open, close) &&
+                        low <= minOf(open, close) &&
+                        high >= low) {
+                    "Line ${index + 1}: OHLC values check karein."
+                }
+
+                Candle(
+                    open = open,
+                    high = high,
+                    low = low,
+                    close = close,
+                    closeTimeMillis = index.toLong() * 60_000L
                 )
             }
-        }
 
-        val stop = Button(this).apply {
-            text = "Capture band karein"
-            setOnClickListener {
-                stopService(Intent(this@MainActivity, ScreenCaptureService::class.java))
-                status.text = "Capture band kar di gayi."
+            val analysis = AnalysisEngine.analyze(candles)
+
+            result.text = buildString {
+                appendLine("SIGNAL: ${analysis.signal}")
+                appendLine()
+                appendLine("Setup Strength: ${analysis.strength}%")
+                appendLine()
+                appendLine("EMA 9: ${String.format(Locale.US, "%.5f", analysis.ema9)}")
+                appendLine("EMA 21: ${String.format(Locale.US, "%.5f", analysis.ema21)}")
+                appendLine("RSI: ${String.format(Locale.US, "%.2f", analysis.rsi)}")
+                appendLine()
+                appendLine("Reasons:")
+                analysis.reasons.forEach {
+                    appendLine("- $it")
+                }
+                appendLine()
+                append("Yeh score win probability nahi hai. Pehle demo par test karein.")
             }
-        }
 
-        layout.addView(status)
-        layout.addView(start)
-        layout.addView(stop)
-        setContentView(layout)
+        } catch (e: Exception) {
+            result.text = "Error: ${e.message}\n\n35 ya zyada sahi OHLC candle lines enter karein."
+        }
     }
 
     @Deprecated("Use Activity Result API in production")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == captureRequest && resultCode == RESULT_OK && data != null) {
+        if (requestCode == captureRequest &&
+            resultCode == RESULT_OK &&
+            data != null
+        ) {
             val service = Intent(this, ScreenCaptureService::class.java).apply {
                 putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
                 putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
@@ -67,11 +197,12 @@ class MainActivity : Activity() {
             startForegroundService(service)
 
             status.text =
-                "Screen capture active hai.\n\n" +
-                "Quotex chart phone par locally capture ho raha hai.\n\n" +
-                "Note: Candle recognition aur CALL/PUT/WAIT analysis abhi complete nahi hai."
+                "Screen capture active hai.\nFrames phone par locally process ho rahe hain."
         } else {
-            status.text = "Screen capture ki permission nahi mili."
+            status.text = "Screen capture permission nahi mili."
         }
     }
 }
+```
+
+ابھی صرف یہ کریں: GitHub میں اسی فائل پر نیا کوڈ Paste کریں اور Commit Changes دبائیں۔ باقی فائلوں کو نہ چھیڑیں۔ پھر مجھے بتائیں، میں اگلا مرحلہ دوں گا۔

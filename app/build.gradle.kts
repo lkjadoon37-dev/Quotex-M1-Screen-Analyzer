@@ -12,9 +12,9 @@ android {
         applicationId = "com.example.quotexm1analyzer"
         minSdk = 23
         targetSdk = 35
-        
-    }versionCode = 2
-versionName = "1.1"
+        versionCode = 2
+        versionName = "1.1"
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

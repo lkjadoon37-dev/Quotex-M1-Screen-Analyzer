@@ -51,6 +51,7 @@ class MainActivity : Activity() {
         addButton("Screen Capture Shuru Karein") {
             val manager =
                 getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+
             startActivityForResult(
                 manager.createScreenCaptureIntent(),
                 captureRequest
@@ -74,7 +75,7 @@ class MainActivity : Activity() {
         })
 
         candleInput = EditText(this).apply {
-            hint = "1.1000,1.1020,1.0990,1.1010\n1.1010,1.1030,1.1000,1.1020"
+            hint = "1.1000,1.1020,1.0990,1.1010"
             minLines = 8
             gravity = Gravity.TOP
             textSize = 14f
@@ -102,6 +103,12 @@ class MainActivity : Activity() {
         setContentView(scroll)
     }
 
+    private fun formatValue(value: Double?, decimals: Int): String {
+        return value?.let {
+            String.format(Locale.US, "%.${decimals}f", it)
+        } ?: "N/A"
+    }
+
     private fun analyzeCandles() {
         try {
             val lines = candleInput.text.toString()
@@ -119,9 +126,11 @@ class MainActivity : Activity() {
 
                 val (open, high, low, close) = values
 
-                require(high >= maxOf(open, close) &&
-                        low <= minOf(open, close) &&
-                        high >= low) {
+                require(
+                    high >= maxOf(open, close) &&
+                    low <= minOf(open, close) &&
+                    high >= low
+                ) {
                     "Line ${index + 1}: OHLC values check karein."
                 }
 
@@ -141,20 +150,25 @@ class MainActivity : Activity() {
                 appendLine()
                 appendLine("Setup Strength: ${analysis.strength}%")
                 appendLine()
-                appendLine("EMA 9: ${String.format(Locale.US, "%.5f", analysis.ema9)}")
-                appendLine("EMA 21: ${String.format(Locale.US, "%.5f", analysis.ema21)}")
-                appendLine("RSI: ${String.format(Locale.US, "%.2f", analysis.rsi)}")
+                appendLine("EMA 9: ${formatValue(analysis.ema9, 5)}")
+                appendLine("EMA 21: ${formatValue(analysis.ema21, 5)}")
+                appendLine("RSI 14: ${formatValue(analysis.rsi14, 2)}")
+                appendLine("MACD: ${formatValue(analysis.macd, 6)}")
+                appendLine("MACD Signal: ${formatValue(analysis.macdSignal, 6)}")
+                appendLine("Support: ${formatValue(analysis.support, 5)}")
+                appendLine("Resistance: ${formatValue(analysis.resistance, 5)}")
                 appendLine()
-                appendLine("Reasons:")
-                analysis.reasons.forEach {
-                    appendLine("- $it")
+                appendLine("Explanation:")
+                analysis.explanation.forEach { reason ->
+                    appendLine("- $reason")
                 }
                 appendLine()
-                append("Yeh score win probability nahi hai. Pehle demo par test karein.")
+                append("Strength score win probability nahi hai. Pehle demo par test karein.")
             }
 
         } catch (e: Exception) {
-            result.text = "Error: ${e.message}\n\n35 ya zyada sahi OHLC candle lines enter karein."
+            result.text =
+                "Error: ${e.message}\n\nHar candle mein 4 valid OHLC values dein."
         }
     }
 
@@ -166,7 +180,8 @@ class MainActivity : Activity() {
     ) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == captureRequest &&
+        if (
+            requestCode == captureRequest &&
             resultCode == RESULT_OK &&
             data != null
         ) {

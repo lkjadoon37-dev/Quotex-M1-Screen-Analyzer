@@ -1,29 +1,43 @@
 
-name: Install Project ZIP
+name: Build Quotex M1 Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  install:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Extract project files
-        run: |
-          unzip -q Quotex_M1_Screen_Analyzer_READY_SOURCE.zip -d /tmp/project
-          cp -a /tmp/project/QuotexM1ScreenAnalyzer/. .
-          rm Quotex_M1_Screen_Analyzer_READY_SOURCE.zip
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-      - name: Save project files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Install complete Quotex analyzer project" || echo "No changes"
-          git push
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        run: gradle :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Quotex-M1-Analyzer-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

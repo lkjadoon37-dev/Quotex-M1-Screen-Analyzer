@@ -113,16 +113,14 @@ class MainActivity : Activity() {
                     status.text =
                         "SCREEN CAPTURE ACTIVE\nPhone par local processing chal rahi hai."
 
-                    frameInfo.text = buildString {
-                        appendLine("FRAME STATUS: RECEIVING")
-                        appendLine("Received frames: $frameCount")
-                        appendLine("Screen size: $width x $height")
-                        appendLine("Brightness: ${String.format(Locale.US, "%.2f", brightness)}")
-                        appendLine("Contrast: ${String.format(Locale.US, "%.2f", contrast)}")
-                        appendLine("Sampled pixels: $pixels")
-                        appendLine()
-                        append("Screen frames phone par locally process ho rahe hain.")
-                    }
+                    frameInfo.text = buildFrameInfo(
+                        width,
+                        height,
+                        brightness,
+                        contrast,
+                        pixels,
+                        frameCount
+                    )
                 }
 
                 ScreenCaptureService.ACTION_CAPTURE_ERROR -> {
@@ -232,6 +230,26 @@ class MainActivity : Activity() {
         setContentView(scroll)
     }
 
+    private fun buildFrameInfo(
+        width: Int,
+        height: Int,
+        brightness: Double,
+        contrast: Double,
+        pixels: Int,
+        count: Int
+    ): String {
+        return buildString {
+            appendLine("FRAME STATUS: RECEIVING")
+            appendLine("Received frames: $count")
+            appendLine("Screen size: $width x $height")
+            appendLine("Brightness: ${String.format(Locale.US, "%.2f", brightness)}")
+            appendLine("Contrast: ${String.format(Locale.US, "%.2f", contrast)}")
+            appendLine("Sampled pixels: $pixels")
+            appendLine()
+            append("Screen frames phone par locally process ho rahe hain.")
+        }
+    }
+
     private fun startScreenCapture() {
         try {
             val manager =
@@ -268,23 +286,67 @@ class MainActivity : Activity() {
 
         receiverRegistered = true
 
-        // Restore the latest saved screen information when returning to the app.
+        // Restore latest frame information from the running service.
         val width = ScreenCaptureService.latestFrameWidth
         val height = ScreenCaptureService.latestFrameHeight
+        val brightness = ScreenCaptureService.latestFrameBrightness
+        val contrast = ScreenCaptureService.latestFrameContrast
+        val pixels = ScreenCaptureService.latestFramePixels
+
         val previousOcr = ScreenCaptureService.latestOcrText
+        val previousNumbers = ScreenCaptureService.latestOcrNumbers
+
+        val previousAnalysis = ScreenCaptureService.latestScreenAnalysis
+        val candleCount = ScreenCaptureService.latestCandleCount
+        val scalePoints = ScreenCaptureService.latestScalePoints
 
         if (width > 0 && height > 0) {
             status.text =
                 "SCREEN CAPTURE ACTIVE\nPhone par local processing chal rahi hai."
-            frameInfo.text = buildString {
-                appendLine("FRAME STATUS: LAST FRAME RECEIVED")
-                appendLine("Screen size: $width x $height")
-                append("Naye frame update ka intezar hai.")
+
+            frameCount = 1
+
+            frameInfo.text = buildFrameInfo(
+                width,
+                height,
+                brightness,
+                contrast,
+                pixels,
+                frameCount
+            )
+        }
+
+        if (previousOcr.isNotBlank() || previousNumbers.isNotBlank()) {
+            ocrInfo.text = buildString {
+                appendLine("PRICE TEXT READING")
+                appendLine()
+                appendLine("Detected numbers:")
+                appendLine(
+                    if (previousNumbers.isBlank()) "Abhi koi number detect nahi hua."
+                    else previousNumbers
+                )
+                appendLine()
+                appendLine("Detected text and screen positions:")
+                appendLine(
+                    if (previousOcr.isBlank()) "Koi text detect nahi hua."
+                    else previousOcr
+                )
+                appendLine()
+                append("Note: OCR text abhi verified market price ya OHLC nahi hai.")
             }
         }
 
-        if (previousOcr.isNotBlank()) {
-            ocrInfo.text = "PRICE TEXT READING\n$previousOcr"
+        if (previousAnalysis.isNotBlank()) {
+            analysisInfo.text = buildString {
+                appendLine("LOCAL CANDLE SCREEN ANALYSIS")
+                appendLine()
+                appendLine("Detected candle candidates: $candleCount")
+                appendLine("Price scale points: $scalePoints")
+                appendLine()
+                appendLine(previousAnalysis)
+                appendLine()
+                append("Note: Candle timing aur OHLC abhi verify hona baqi hai. Yeh CALL/PUT signal nahi hai.")
+            }
         }
     }
 

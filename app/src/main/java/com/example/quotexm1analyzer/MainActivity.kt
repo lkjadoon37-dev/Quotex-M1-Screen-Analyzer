@@ -28,6 +28,14 @@ class MainActivity : Activity() {
             setPadding(24, 24, 24, 24)
         }
 
+        fun addText(message: String, size: Float) {
+            content.addView(TextView(this).apply {
+                text = message
+                textSize = size
+                setPadding(4, 10, 4, 10)
+            })
+        }
+
         fun addButton(label: String, action: () -> Unit) {
             content.addView(Button(this).apply {
                 text = label
@@ -35,44 +43,40 @@ class MainActivity : Activity() {
             })
         }
 
-        content.addView(TextView(this).apply {
-            text = "QUOTEX AI ANALYZER M1"
-            textSize = 23f
-            gravity = Gravity.CENTER
-        })
+        addText("QUOTEX AI ANALYZER M1", 23f)
 
         status = TextView(this).apply {
             text = "Screen capture band hai."
             textSize = 16f
-            setPadding(4, 16, 4, 16)
+            setPadding(4, 12, 4, 12)
         }
         content.addView(status)
 
-        addButton("Screen Capture Shuru Karein") {
+        addButton("SCREEN CAPTURE SHURU KAREIN") {
             val manager =
                 getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-
             startActivityForResult(
                 manager.createScreenCaptureIntent(),
                 captureRequest
             )
         }
 
-        addButton("Capture Band Karein") {
+        addButton("CAPTURE BAND KAREIN") {
             stopService(Intent(this, ScreenCaptureService::class.java))
-            status.text = "Screen capture band kar di gayi."
+            status.text = "Screen capture band hai."
         }
 
-        content.addView(TextView(this).apply {
-            text = "\nCANDLE DATA ANALYSIS"
-            textSize = 19f
-        })
+        addText(
+            "ZAROORI: Capture abhi screen frames leta hai. Quotex candles ki automatic pehchan abhi tayyar nahi.",
+            14f
+        )
 
-        content.addView(TextView(this).apply {
-            text = "Kam az kam 35 closed candles enter karein. Har line mein Open,High,Low,Close likhein. Purani candle pehle aur nayi candle aakhir mein."
-            textSize = 14f
-            setPadding(4, 8, 4, 8)
-        })
+        addText("CANDLE DATA ANALYSIS", 19f)
+
+        addText(
+            "Kam az kam 35 CLOSED M1 candles enter karein. Har line mein Open,High,Low,Close likhein. Purani candle pehle aur nayi candle aakhir mein.",
+            14f
+        )
 
         candleInput = EditText(this).apply {
             hint = "1.1000,1.1020,1.0990,1.1010"
@@ -86,13 +90,13 @@ class MainActivity : Activity() {
             analyzeCandles()
         }
 
-        addButton("Data Clear Karein") {
+        addButton("DATA CLEAR KAREIN") {
             candleInput.text.clear()
             result.text = "Analysis result yahan show hoga."
         }
 
         result = TextView(this).apply {
-            text = "\nAnalysis result yahan show hoga."
+            text = "Analysis result yahan show hoga."
             textSize = 17f
             setPadding(4, 20, 4, 20)
         }
@@ -159,11 +163,9 @@ class MainActivity : Activity() {
                 appendLine("Resistance: ${formatValue(analysis.resistance, 5)}")
                 appendLine()
                 appendLine("Explanation:")
-                analysis.explanation.forEach { reason ->
-                    appendLine("- $reason")
-                }
+                analysis.explanation.forEach { appendLine("- $it") }
                 appendLine()
-                append("Strength score win probability nahi hai. Pehle demo par test karein.")
+                append("Strength score win probability nahi hai. Demo par test karein.")
             }
 
         } catch (e: Exception) {
@@ -193,7 +195,7 @@ class MainActivity : Activity() {
             startForegroundService(service)
 
             status.text =
-                "Screen capture active hai.\nFrames phone par locally process ho rahe hain."
+                "Capture active hai. Frames phone par receive ho rahe hain. Candle recognition abhi tayyar nahi."
         } else {
             status.text = "Screen capture permission nahi mili."
         }

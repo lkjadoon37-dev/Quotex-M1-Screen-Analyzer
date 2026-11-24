@@ -17,13 +17,17 @@ data class PriceScaleResult(
 
 object PriceScaleAnalyzer {
 
-    // Supports different currency-pair and asset price formats.
-    private val pricePattern =
-        Regex("""(?<![\d])\d+(?:[.,]\d{1,8})?(?![\d])""")
+    // Only accept complete numeric price labels.
+    // This rejects times such as 22:56 and percentages.
+    private val pricePattern = Regex(
+        """^\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,8})?|\d+(?:[.,]\d{1,8})?)\s*$"""
+    )
 
     private fun parsePrice(text: String): Double? {
-        val match = pricePattern.find(text) ?: return null
-        val token = match.value
+        val match = pricePattern.matchEntire(text)
+            ?: return null
+
+        val token = match.groupValues[1]
 
         val normalized = when {
             token.contains('.') && token.contains(',') ->
@@ -46,10 +50,11 @@ object PriceScaleAnalyzer {
             return invalid("Screen size valid nahi hai.")
         }
 
-        // Price labels are expected on the right-side price scale.
-        val minX = screenWidth * 0.80
-        val minY = screenHeight * 0.10
-        val maxY = screenHeight * 0.90
+        // Calibrated to the supplied Quotex screenshot.
+        val minX = screenWidth * 0.84
+        val maxX = screenWidth * 0.995
+        val minY = screenHeight * 0.22
+        val maxY = screenHeight * 0.75
 
         val points = lines.mapNotNull { line ->
 
@@ -57,6 +62,7 @@ object PriceScaleAnalyzer {
             val centerY = (line.top + line.bottom) / 2.0
 
             if (centerX < minX ||
+                centerX > maxX ||
                 centerY < minY ||
                 centerY > maxY
             ) {
@@ -71,14 +77,15 @@ object PriceScaleAnalyzer {
             }
 
             PriceScalePoint(price, centerY)
-
         }.distinctBy {
             "${it.price}_${it.y.toInt()}"
+        }.sortedBy {
+            it.y
         }
 
         if (points.size < 3) {
             return invalid(
-                "Price Scale ke kam az kam 3 price labels zaroori hain."
+                "Price Scale ke kam az kam 3 valid labels zaroori hain."
             )
         }
 
@@ -98,7 +105,7 @@ object PriceScaleAnalyzer {
                 (point.y - meanY)
         }
 
-        if (denominator == 0.0) {
+        if (denominator <= 0.0) {
             return invalid("Price Scale calibration fail hui.")
         }
 
@@ -111,20 +118,20 @@ object PriceScaleAnalyzer {
             )
         }
 
-        val predicted = points.map {
-            intercept + slope * it.y
+        val errors = points.map { point ->
+            kotlin.math.abs(
+                (intercept + slope * point.y) - point.price
+            )
         }
 
-        val averageError = points.indices.map {
-            kotlin.math.abs(predicted[it] - points[it].price)
-        }.average()
+        val averageError = errors.average()
 
-        val tolerance =
+        val priceRange =
             points.maxOf { it.price } -
             points.minOf { it.price }
 
-        if (tolerance <= 0.0 ||
-            averageError > tolerance * 0.20
+        if (priceRange <= 0.0 ||
+            averageError > priceRange * 0.20
         ) {
             return invalid(
                 "Price labels aapas mein match nahi kar rahe."
@@ -134,10 +141,11 @@ object PriceScaleAnalyzer {
         return PriceScaleResult(
             valid = true,
             pricePerPixel = slope,
-            referencePrice = intercept + slope * meanY,
+            referencePrice = meanPrice,
             referenceY = meanY,
             pointsUsed = points.size,
-            message = "Price Scale calibration available hai."
+            message =
+                "Price Scale calibrated. ${points.size} labels verified."
         )
     }
 

@@ -2,8 +2,12 @@
 package com.example.quotexm1analyzer
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
@@ -16,65 +20,179 @@ import java.util.Locale
 class MainActivity : Activity() {
 
     private val captureRequest = 4101
+
     private lateinit var status: TextView
+    private lateinit var frameInfo: TextView
     private lateinit var result: TextView
     private lateinit var candleInput: EditText
 
+    private var receiverRegistered = false
+    private var frameCount = 0
+
+    private val frameReceiver = object : BroadcastReceiver() {
+
+        override fun onReceive(
+            context: Context?,
+            intent: Intent?
+        ) {
+
+            when (intent?.action) {
+
+                ScreenCaptureService.ACTION_FRAME_UPDATE -> {
+
+                    frameCount++
+
+                    val width = intent.getIntExtra(
+                        ScreenCaptureService.EXTRA_FRAME_WIDTH,
+                        0
+                    )
+
+                    val height = intent.getIntExtra(
+                        ScreenCaptureService.EXTRA_FRAME_HEIGHT,
+                        0
+                    )
+
+                    val brightness = intent.getDoubleExtra(
+                        ScreenCaptureService.EXTRA_FRAME_BRIGHTNESS,
+                        0.0
+                    )
+
+                    val contrast = intent.getDoubleExtra(
+                        ScreenCaptureService.EXTRA_FRAME_CONTRAST,
+                        0.0
+                    )
+
+                    val pixels = intent.getIntExtra(
+                        ScreenCaptureService.EXTRA_FRAME_PIXELS,
+                        0
+                    )
+
+                    status.text =
+                        "SCREEN CAPTURE ACTIVE\nPhone par local processing chal rahi hai."
+
+                    frameInfo.text = buildString {
+                        appendLine("FRAME STATUS: RECEIVING")
+                        appendLine("Received frames: $frameCount")
+                        appendLine("Screen size: $width x $height")
+                        appendLine(
+                            "Brightness: ${
+                                String.format(Locale.US, "%.2f", brightness)
+                            }"
+                        )
+                        appendLine(
+                            "Contrast: ${
+                                String.format(Locale.US, "%.2f", contrast)
+                            }"
+                        )
+                        appendLine("Sampled pixels: $pixels")
+                        appendLine()
+                        append(
+                            "Note: Frames receive ho rahe hain. " +
+                            "Automatic candle recognition abhi tayyar nahi."
+                        )
+                    }
+                }
+
+                ScreenCaptureService.ACTION_CAPTURE_ERROR -> {
+
+                    val message = intent.getStringExtra(
+                        ScreenCaptureService.EXTRA_ERROR_MESSAGE
+                    ) ?: "Unknown capture error"
+
+                    status.text = "CAPTURE ERROR:\n$message"
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        createScreen()
+    }
+
+    private fun createScreen() {
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 24, 24, 24)
         }
 
-        fun addText(message: String, size: Float) {
-            content.addView(TextView(this).apply {
+        fun addText(message: String, size: Float): TextView {
+
+            val view = TextView(this).apply {
                 text = message
                 textSize = size
                 setPadding(4, 10, 4, 10)
-            })
+            }
+
+            content.addView(view)
+            return view
         }
 
-        fun addButton(label: String, action: () -> Unit) {
+        fun addButton(
+            label: String,
+            action: () -> Unit
+        ) {
+
             content.addView(Button(this).apply {
                 text = label
-                setOnClickListener { action() }
+                setOnClickListener {
+                    action()
+                }
             })
         }
 
         addText("QUOTEX AI ANALYZER M1", 23f)
 
-        status = TextView(this).apply {
-            text = "Screen capture band hai."
-            textSize = 16f
-            setPadding(4, 12, 4, 12)
-        }
-        content.addView(status)
+        addText(
+            "LOCAL SCREEN ANALYSIS",
+            17f
+        )
+
+        status = addText(
+            "Screen capture band hai.",
+            16f
+        )
 
         addButton("SCREEN CAPTURE SHURU KAREIN") {
-            val manager =
-                getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            startActivityForResult(
-                manager.createScreenCaptureIntent(),
-                captureRequest
-            )
+            startScreenCapture()
         }
 
         addButton("CAPTURE BAND KAREIN") {
-            stopService(Intent(this, ScreenCaptureService::class.java))
+
+            stopService(
+                Intent(this, ScreenCaptureService::class.java)
+            )
+
             status.text = "Screen capture band hai."
+
+            frameInfo.text =
+                "Capture stopped. Dobara start karne ke liye button dabayein."
+
+            frameCount = 0
         }
 
-        addText(
-            "ZAROORI: Capture abhi screen frames leta hai. Quotex candles ki automatic pehchan abhi tayyar nahi.",
+        frameInfo = addText(
+            "FRAME STATUS: WAITING\nAbhi koi frame receive nahi hua.",
             14f
         )
 
-        addText("CANDLE DATA ANALYSIS", 19f)
+        addText(
+            "PRIVACY: Screen frames phone par process hote hain. " +
+            "Is app mein screenshot upload karne ka code nahi hai.",
+            14f
+        )
 
         addText(
-            "Kam az kam 35 CLOSED M1 candles enter karein. Har line mein Open,High,Low,Close likhein. Purani candle pehle aur nayi candle aakhir mein.",
+            "CANDLE DATA ANALYSIS",
+            19f
+        )
+
+        addText(
+            "Kam az kam 35 CLOSED M1 candles enter karein. " +
+            "Har line mein Open, High, Low, Close likhein. " +
+            "Purani candle pehle aur nayi candle aakhir mein.",
             14f
         )
 
@@ -84,6 +202,7 @@ class MainActivity : Activity() {
             gravity = Gravity.TOP
             textSize = 14f
         }
+
         content.addView(candleInput)
 
         addButton("ANALYZE CANDLES") {
@@ -95,34 +214,120 @@ class MainActivity : Activity() {
             result.text = "Analysis result yahan show hoga."
         }
 
-        result = TextView(this).apply {
-            text = "Analysis result yahan show hoga."
-            textSize = 17f
-            setPadding(4, 20, 4, 20)
-        }
-        content.addView(result)
+        result = addText(
+            "Analysis result yahan show hoga.",
+            17f
+        )
 
         val scroll = ScrollView(this)
         scroll.addView(content)
+
         setContentView(scroll)
     }
 
-    private fun formatValue(value: Double?, decimals: Int): String {
+    private fun startScreenCapture() {
+
+        try {
+
+            val manager =
+                getSystemService(MEDIA_PROJECTION_SERVICE)
+                    as MediaProjectionManager
+
+            startActivityForResult(
+                manager.createScreenCaptureIntent(),
+                captureRequest
+            )
+
+            status.text =
+                "Screen capture permission ka intezar hai."
+
+        } catch (e: Exception) {
+
+            status.text =
+                "Capture start error: ${e.message}"
+        }
+    }
+
+    private fun registerFrameReceiver() {
+
+        if (receiverRegistered) return
+
+        val filter = IntentFilter().apply {
+            addAction(
+                ScreenCaptureService.ACTION_FRAME_UPDATE
+            )
+
+            addAction(
+                ScreenCaptureService.ACTION_CAPTURE_ERROR
+            )
+        }
+
+        if (Build.VERSION.SDK_INT >= 33) {
+
+            registerReceiver(
+                frameReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+
+        } else {
+
+            @Suppress("DEPRECATION")
+            registerReceiver(
+                frameReceiver,
+                filter
+            )
+        }
+
+        receiverRegistered = true
+    }
+
+    override fun onStart() {
+        super.onStart()
+        registerFrameReceiver()
+    }
+
+    override fun onStop() {
+
+        if (receiverRegistered) {
+            unregisterReceiver(frameReceiver)
+            receiverRegistered = false
+        }
+
+        super.onStop()
+    }
+
+    private fun formatValue(
+        value: Double?,
+        decimals: Int
+    ): String {
+
         return value?.let {
-            String.format(Locale.US, "%.${decimals}f", it)
+            String.format(
+                Locale.US,
+                "%.${decimals}f",
+                it
+            )
         } ?: "N/A"
     }
 
     private fun analyzeCandles() {
+
         try {
+
             val lines = candleInput.text.toString()
                 .lines()
-                .filter { it.isNotBlank() }
+                .filter {
+                    it.isNotBlank()
+                }
 
             val candles = lines.mapIndexed { index, line ->
+
                 val values = line.trim()
                     .split(Regex("[,;\\s]+"))
-                    .map { it.toDouble() }
+                    .map {
+                        it.toDouble()
+                    }
 
                 require(values.size == 4) {
                     "Line ${index + 1}: 4 values zaroori hain."
@@ -147,57 +352,124 @@ class MainActivity : Activity() {
                 )
             }
 
-            val analysis = AnalysisEngine.analyze(candles)
+            val analysis =
+                AnalysisEngine.analyze(candles)
 
             result.text = buildString {
+
                 appendLine("SIGNAL: ${analysis.signal}")
                 appendLine()
-                appendLine("Setup Strength: ${analysis.strength}%")
+                appendLine(
+                    "Setup Strength: ${analysis.strength}%"
+                )
                 appendLine()
-                appendLine("EMA 9: ${formatValue(analysis.ema9, 5)}")
-                appendLine("EMA 21: ${formatValue(analysis.ema21, 5)}")
-                appendLine("RSI 14: ${formatValue(analysis.rsi14, 2)}")
-                appendLine("MACD: ${formatValue(analysis.macd, 6)}")
-                appendLine("MACD Signal: ${formatValue(analysis.macdSignal, 6)}")
-                appendLine("Support: ${formatValue(analysis.support, 5)}")
-                appendLine("Resistance: ${formatValue(analysis.resistance, 5)}")
+                appendLine(
+                    "EMA 9: ${formatValue(analysis.ema9, 5)}"
+                )
+                appendLine(
+                    "EMA 21: ${formatValue(analysis.ema21, 5)}"
+                )
+                appendLine(
+                    "RSI 14: ${formatValue(analysis.rsi14, 2)}"
+                )
+                appendLine(
+                    "MACD: ${formatValue(analysis.macd, 6)}"
+                )
+                appendLine(
+                    "MACD Signal: ${
+                        formatValue(analysis.macdSignal, 6)
+                    }"
+                )
+                appendLine(
+                    "Support: ${formatValue(analysis.support, 5)}"
+                )
+                appendLine(
+                    "Resistance: ${
+                        formatValue(analysis.resistance, 5)
+                    }"
+                )
+
                 appendLine()
-                appendLine("Explanation:")
-                analysis.explanation.forEach { appendLine("- $it") }
+                appendLine("EXPLANATION:")
+
+                analysis.explanation.forEach {
+                    appendLine("- $it")
+                }
+
                 appendLine()
-                append("Strength score win probability nahi hai. Demo par test karein.")
+                append(
+                    "Strength score win probability nahi hai. " +
+                    "Demo par test karein."
+                )
             }
 
         } catch (e: Exception) {
+
             result.text =
-                "Error: ${e.message}\n\nHar candle mein 4 valid OHLC values dein."
+                "Error: ${e.message}\n\n" +
+                "Har candle mein 4 valid OHLC values dein."
         }
     }
 
-    @Deprecated("Use Activity Result API in production")
+    @Deprecated("Legacy screen capture permission result")
     override fun onActivityResult(
         requestCode: Int,
         resultCode: Int,
         data: Intent?
     ) {
-        super.onActivityResult(requestCode, resultCode, data)
+
+        super.onActivityResult(
+            requestCode,
+            resultCode,
+            data
+        )
 
         if (
             requestCode == captureRequest &&
             resultCode == RESULT_OK &&
             data != null
         ) {
-            val service = Intent(this, ScreenCaptureService::class.java).apply {
-                putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
-                putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
+
+            val serviceIntent =
+                Intent(this, ScreenCaptureService::class.java).apply {
+
+                    putExtra(
+                        ScreenCaptureService.EXTRA_RESULT_CODE,
+                        resultCode
+                    )
+
+                    putExtra(
+                        ScreenCaptureService.EXTRA_RESULT_DATA,
+                        data
+                    )
+                }
+
+            try {
+
+                if (Build.VERSION.SDK_INT >= 26) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+
+                frameCount = 0
+
+                status.text =
+                    "Capture permission mil gayi. Frames ka intezar hai."
+
+                frameInfo.text =
+                    "FRAME STATUS: STARTING..."
+
+            } catch (e: Exception) {
+
+                status.text =
+                    "Service start error: ${e.message}"
             }
 
-            startForegroundService(service)
+        } else {
 
             status.text =
-                "Capture active hai. Frames phone par receive ho rahe hain. Candle recognition abhi tayyar nahi."
-        } else {
-            status.text = "Screen capture permission nahi mili."
+                "Screen capture permission nahi mili."
         }
     }
 }

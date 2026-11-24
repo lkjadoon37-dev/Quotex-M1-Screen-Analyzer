@@ -2,7 +2,7 @@
 package com.example.quotexm1analyzer
 
 import android.graphics.Bitmap
-import kotlin.math.abs
+import android.graphics.Color
 
 data class DetectedCandle(
     val x: Int,
@@ -16,11 +16,24 @@ data class DetectedCandle(
 
 class CandleDetector {
 
+    private enum class CandleColor {
+        GREEN, RED
+    }
+
+    private data class ColumnHit(
+        val x: Int,
+        val color: CandleColor,
+        val ys: List<Int>
+    )
+
     companion object {
-        private const val GREEN_MIN = 100
-        private const val RED_MIN = 100
+        private const val GREEN_MIN = 145
+        private const val RED_MIN = 165
+
+        private const val MIN_COLUMN_PIXELS = 3
         private const val MIN_BODY_HEIGHT = 2
-        private const val MIN_WICK_HEIGHT = 1
+
+        private const val WICK_MAX_GAP = 2
     }
 
     fun detect(
@@ -29,122 +42,270 @@ class CandleDetector {
     ): List<DetectedCandle> {
 
         if (bitmap.isRecycled ||
+            bitmap.width <= 0 ||
+            bitmap.height <= 0 ||
             bounds.width <= 0 ||
             bounds.height <= 0
-        ) return emptyList()
+        ) {
+            return emptyList()
+        }
 
         val left = bounds.left.coerceIn(0, bitmap.width - 1)
         val right = bounds.right.coerceIn(left + 1, bitmap.width)
         val top = bounds.top.coerceIn(0, bitmap.height - 1)
         val bottom = bounds.bottom.coerceIn(top + 1, bitmap.height)
 
-        val candles = mutableListOf<DetectedCandle>()
+        val hits = mutableListOf<ColumnHit>()
 
-        var x = left
+        for (x in left until right) {
 
-        while (x < right) {
-
-            val green = mutableListOf<Int>()
-            val red = mutableListOf<Int>()
+            val greenYs = mutableListOf<Int>()
+            val redYs = mutableListOf<Int>()
 
             for (y in top until bottom) {
+
                 val color = bitmap.getPixel(x, y)
 
-                val r = android.graphics.Color.red(color)
-                val g = android.graphics.Color.green(color)
-                val b = android.graphics.Color.blue(color)
+                val r = Color.red(color)
+                val g = Color.green(color)
+                val b = Color.blue(color)
 
-                if (g > GREEN_MIN && g > r * 1.25 &&
-                    g > b * 1.10
-                ) {
-                    green.add(y)
+                if (isGreen(r, g, b)) {
+                    greenYs.add(y)
                 }
 
-                if (r > RED_MIN && r > g * 1.25 &&
-                    r > b * 1.10
-                ) {
-                    red.add(y)
+                if (isRed(r, g, b)) {
+                    redYs.add(y)
                 }
             }
 
-            val bullish = green.size > red.size
-            val selected = if (bullish) green else red
+            val selectedColor: CandleColor
+            val selectedYs: List<Int>
 
-            if (selected.size >= MIN_BODY_HEIGHT) {
+            if (greenYs.size > redYs.size &&
+                greenYs.size >= MIN_COLUMN_PIXELS
+            ) {
+                selectedColor = CandleColor.GREEN
+                selectedYs = greenYs
 
-                val highY = selected.minOrNull()!!
-                val lowY = selected.maxOrNull()!!
+            } else if (redYs.size >= MIN_COLUMN_PIXELS) {
+                selectedColor = CandleColor.RED
+                selectedYs = redYs
 
-                val bodyHeight = lowY - highY
-
-                if (bodyHeight >= MIN_BODY_HEIGHT) {
-
-                    candles.add(
-                        DetectedCandle(
-                            x = x,
-                            openY = if (bullish) lowY else highY,
-                            closeY = if (bullish) highY else lowY,
-                            highY = highY,
-                            lowY = lowY,
-                            isBullish = bullish,
-                            bodyHeight = bodyHeight
-                        )
-                    )
-                }
+            } else {
+                continue
             }
 
-            x++
+            hits.add(
+                ColumnHit(
+                    x = x,
+                    color = selectedColor,
+                    ys = selectedYs
+                )
+            )
         }
 
-        return mergeNearbyPixels(candles)
+        return buildCandles(
+            bitmap = bitmap,
+            hits = hits,
+            top = top,
+            bottom = bottom
+        )
     }
 
-    private fun mergeNearbyPixels(
-        input: List<DetectedCandle>
+    private fun isGreen(
+        r: Int,
+        g: Int,
+        b: Int
+    ): Boolean {
+
+        return g >= GREEN_MIN &&
+            g - r >= 45 &&
+            g - b >= 30
+    }
+
+    private fun isRed(
+        r: Int,
+        g: Int,
+        b: Int
+    ): Boolean {
+
+        return r >= RED_MIN &&
+            r - g >= 55 &&
+            r - b >= 45
+    }
+
+    private fun buildCandles(
+        bitmap: Bitmap,
+        hits: List<ColumnHit>,
+        top: Int,
+        bottom: Int
     ): List<DetectedCandle> {
 
-        if (input.isEmpty()) return emptyList()
+        if (hits.isEmpty()) return emptyList()
 
         val result = mutableListOf<DetectedCandle>()
-        var group = mutableListOf<DetectedCandle>()
+        var group = mutableListOf<ColumnHit>()
 
-        for (candle in input) {
+        for (hit in hits) {
 
-            if (group.isEmpty() ||
-                candle.x - group.last().x <= 3
-            ) {
-                group.add(candle)
+            val previous = group.lastOrNull()
+
+            val sameGroup =
+                previous != null &&
+                previous.color == hit.color &&
+                hit.x - previous.x <= 2
+
+            if (group.isEmpty() || sameGroup) {
+                group.add(hit)
             } else {
-                result.add(combine(group))
-                group = mutableListOf(candle)
+                detectGroup(
+                    bitmap,
+                    group,
+                    top,
+                    bottom
+                )?.let { result.add(it) }
+
+                group = mutableListOf(hit)
             }
         }
 
         if (group.isNotEmpty()) {
-            result.add(combine(group))
+            detectGroup(
+                bitmap,
+                group,
+                top,
+                bottom
+            )?.let { result.add(it) }
         }
 
-        return result
+        return result.sortedBy { it.x }
     }
 
-    private fun combine(
-        group: List<DetectedCandle>
-    ): DetectedCandle {
+    private fun detectGroup(
+        bitmap: Bitmap,
+        group: List<ColumnHit>,
+        top: Int,
+        bottom: Int
+    ): DetectedCandle? {
 
-        val first = group.first()
-        val last = group.last()
+        if (group.isEmpty()) return null
 
-        val high = group.minOf { it.highY }
-        val low = group.maxOf { it.lowY }
+        val color = group.first().color
+        val rowCounts = IntArray(bottom - top)
+
+        for (column in group) {
+            for (y in column.ys) {
+                val index = y - top
+
+                if (index in rowCounts.indices) {
+                    rowCounts[index]++
+                }
+            }
+        }
+
+        val requiredSupport = maxOf(
+            2,
+            (group.size * 35 + 99) / 100
+        )
+
+        val bodyRows = rowCounts.indices.filter {
+            rowCounts[it] >= requiredSupport
+        }
+
+        if (bodyRows.isEmpty()) return null
+
+        val bodyTop = top + bodyRows.first()
+        val bodyBottom = top + bodyRows.last()
+
+        val bodyHeight = bodyBottom - bodyTop
+
+        if (bodyHeight < MIN_BODY_HEIGHT) return null
+
+        val centerX = group[group.size / 2].x
+
+        var highY = bodyTop
+        var lowY = bodyBottom
+
+        // Candle ki upper wick detect karna
+        var misses = 0
+        var y = bodyTop - 1
+
+        while (y >= top && misses <= WICK_MAX_GAP) {
+
+            if (isCandlePixel(bitmap, centerX, y, color)) {
+                highY = y
+                misses = 0
+            } else {
+                misses++
+            }
+
+            y--
+        }
+
+        // Candle ki lower wick detect karna
+        misses = 0
+        y = bodyBottom + 1
+
+        while (y < bottom && misses <= WICK_MAX_GAP) {
+
+            if (isCandlePixel(bitmap, centerX, y, color)) {
+                lowY = y
+                misses = 0
+            } else {
+                misses++
+            }
+
+            y++
+        }
+
+        val bullish = color == CandleColor.GREEN
+
+        val openY = if (bullish) {
+            bodyBottom
+        } else {
+            bodyTop
+        }
+
+        val closeY = if (bullish) {
+            bodyTop
+        } else {
+            bodyBottom
+        }
 
         return DetectedCandle(
-            x = group.map { it.x }.average().toInt(),
-            openY = first.openY,
-            closeY = last.closeY,
-            highY = high,
-            lowY = low,
-            isBullish = last.closeY < first.openY,
-            bodyHeight = abs(first.openY - last.closeY)
+            x = centerX,
+            openY = openY,
+            closeY = closeY,
+            highY = highY,
+            lowY = lowY,
+            isBullish = bullish,
+            bodyHeight = bodyHeight
         )
+    }
+
+    private fun isCandlePixel(
+        bitmap: Bitmap,
+        x: Int,
+        y: Int,
+        color: CandleColor
+    ): Boolean {
+
+        if (x !in 0 until bitmap.width ||
+            y !in 0 until bitmap.height
+        ) {
+            return false
+        }
+
+        val pixel = bitmap.getPixel(x, y)
+
+        val r = Color.red(pixel)
+        val g = Color.green(pixel)
+        val b = Color.blue(pixel)
+
+        return when (color) {
+            CandleColor.GREEN -> isGreen(r, g, b)
+            CandleColor.RED -> isRed(r, g, b)
+        }
     }
 }

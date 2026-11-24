@@ -62,7 +62,35 @@ class ScreenCaptureService : Service() {
             private set
 
         @Volatile
+        var latestFrameBrightness: Double = 0.0
+            private set
+
+        @Volatile
+        var latestFrameContrast: Double = 0.0
+            private set
+
+        @Volatile
+        var latestFramePixels: Int = 0
+            private set
+
+        @Volatile
         var latestOcrText: String = ""
+            private set
+
+        @Volatile
+        var latestOcrNumbers: String = ""
+            private set
+
+        @Volatile
+        var latestScreenAnalysis: String = ""
+            private set
+
+        @Volatile
+        var latestCandleCount: Int = 0
+            private set
+
+        @Volatile
+        var latestScalePoints: Int = 0
             private set
     }
 
@@ -86,6 +114,7 @@ class ScreenCaptureService : Service() {
 
         if (projection != null) return START_NOT_STICKY
 
+        isReleased = false
         createNotificationChannel()
 
         try {
@@ -223,6 +252,10 @@ class ScreenCaptureService : Service() {
                             val health =
                                 FrameProcessor.inspect(frameBitmap)
 
+                            latestFrameBrightness = health.meanLuma
+                            latestFrameContrast = health.contrast
+                            latestFramePixels = health.sampledPixels
+
                             val update = Intent(ACTION_FRAME_UPDATE).apply {
                                 setPackage(packageName)
                                 putExtra(EXTRA_FRAME_WIDTH, health.width)
@@ -234,19 +267,24 @@ class ScreenCaptureService : Service() {
 
                             sendBroadcast(update)
 
-                            // Separate bitmap copy for asynchronous local analysis.
                             val analysisBitmap = frameBitmap.copy(
                                 Bitmap.Config.ARGB_8888,
                                 false
                             )
 
-                            // OCR runs locally on the phone.
-                            // PriceTextReader makes its own bitmap copy.
                             priceReader?.read(frameBitmap) { result ->
 
                                 if (result.error != null) {
                                     Log.e(TAG, "OCR error: ${result.error}")
-                                    analysisBitmap?.recycle()
+
+                                    latestOcrText = "OCR error: ${result.error}"
+                                    latestOcrNumbers = ""
+
+                                    if (analysisBitmap != null &&
+                                        !analysisBitmap.isRecycled
+                                    ) {
+                                        analysisBitmap.recycle()
+                                    }
                                 } else {
                                     val text = result.lines.joinToString("\n") {
                                         "${it.text} [${it.left},${it.top},${it.right},${it.bottom}]"
@@ -256,6 +294,7 @@ class ScreenCaptureService : Service() {
                                         result.numericValues.joinToString(",")
 
                                     latestOcrText = text
+                                    latestOcrNumbers = numbers
 
                                     val ocrUpdate =
                                         Intent(ACTION_FRAME_UPDATE).apply {
@@ -277,6 +316,13 @@ class ScreenCaptureService : Service() {
                                                             analysisBitmap,
                                                             result.lines
                                                         )
+
+                                                    latestScreenAnalysis =
+                                                        analysis.message
+                                                    latestCandleCount =
+                                                        analysis.candles.size
+                                                    latestScalePoints =
+                                                        analysis.scalePoints
 
                                                     val analysisUpdate =
                                                         Intent(ACTION_FRAME_UPDATE).apply {
@@ -411,7 +457,14 @@ class ScreenCaptureService : Service() {
 
         latestFrameWidth = 0
         latestFrameHeight = 0
+        latestFrameBrightness = 0.0
+        latestFrameContrast = 0.0
+        latestFramePixels = 0
         latestOcrText = ""
+        latestOcrNumbers = ""
+        latestScreenAnalysis = ""
+        latestCandleCount = 0
+        latestScalePoints = 0
     }
 
     private fun createNotificationChannel() {

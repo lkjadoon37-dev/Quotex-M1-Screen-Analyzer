@@ -45,6 +45,10 @@ class ScreenCaptureService : Service() {
         const val EXTRA_OCR_TEXT = "ocr_text"
         const val EXTRA_OCR_NUMBERS = "ocr_numbers"
 
+        const val EXTRA_SCREEN_ANALYSIS = "screen_analysis"
+        const val EXTRA_CANDLE_COUNT = "candle_count"
+        const val EXTRA_SCALE_POINTS = "scale_points"
+
         private const val CHANNEL_ID = "quotex_capture"
         private const val NOTIFICATION_ID = 51
         private const val TAG = "QuotexCapture"
@@ -68,6 +72,8 @@ class ScreenCaptureService : Service() {
     private var worker: HandlerThread? = null
     private var workerHandler: Handler? = null
     private var priceReader: PriceTextReader? = null
+
+    private val screenAnalyzer = CandleScreenAnalyzer()
 
     private var lastFrameTime = 0L
     private var isReleased = false
@@ -219,7 +225,6 @@ class ScreenCaptureService : Service() {
 
                             val update = Intent(ACTION_FRAME_UPDATE).apply {
                                 setPackage(packageName)
-
                                 putExtra(EXTRA_FRAME_WIDTH, health.width)
                                 putExtra(EXTRA_FRAME_HEIGHT, health.height)
                                 putExtra(EXTRA_FRAME_BRIGHTNESS, health.meanLuma)
@@ -229,12 +234,19 @@ class ScreenCaptureService : Service() {
 
                             sendBroadcast(update)
 
+                            // Separate bitmap copy for asynchronous local analysis.
+                            val analysisBitmap = frameBitmap.copy(
+                                Bitmap.Config.ARGB_8888,
+                                false
+                            )
+
                             // OCR runs locally on the phone.
                             // PriceTextReader makes its own bitmap copy.
                             priceReader?.read(frameBitmap) { result ->
 
                                 if (result.error != null) {
                                     Log.e(TAG, "OCR error: ${result.error}")
+                                    analysisBitmap?.recycle()
                                 } else {
                                     val text = result.lines.joinToString("\n") {
                                         "${it.text} [${it.left},${it.top},${it.right},${it.bottom}]"
@@ -253,6 +265,59 @@ class ScreenCaptureService : Service() {
                                         }
 
                                     sendBroadcast(ocrUpdate)
+
+                                    if (analysisBitmap != null) {
+                                        val handler = workerHandler
+
+                                        if (handler != null) {
+                                            handler.post {
+                                                try {
+                                                    val analysis =
+                                                        screenAnalyzer.analyzeFrame(
+                                                            analysisBitmap,
+                                                            result.lines
+                                                        )
+
+                                                    val analysisUpdate =
+                                                        Intent(ACTION_FRAME_UPDATE).apply {
+                                                            setPackage(packageName)
+                                                            putExtra(
+                                                                EXTRA_SCREEN_ANALYSIS,
+                                                                analysis.message
+                                                            )
+                                                            putExtra(
+                                                                EXTRA_CANDLE_COUNT,
+                                                                analysis.candles.size
+                                                            )
+                                                            putExtra(
+                                                                EXTRA_SCALE_POINTS,
+                                                                analysis.scalePoints
+                                                            )
+                                                        }
+
+                                                    sendBroadcast(analysisUpdate)
+
+                                                    Log.i(
+                                                        TAG,
+                                                        "Local screen analysis: ${analysis.message}"
+                                                    )
+
+                                                } catch (error: Exception) {
+                                                    Log.e(
+                                                        TAG,
+                                                        "Screen analysis failed",
+                                                        error
+                                                    )
+                                                } finally {
+                                                    if (!analysisBitmap.isRecycled) {
+                                                        analysisBitmap.recycle()
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            analysisBitmap.recycle()
+                                        }
+                                    }
                                 }
                             }
                         }

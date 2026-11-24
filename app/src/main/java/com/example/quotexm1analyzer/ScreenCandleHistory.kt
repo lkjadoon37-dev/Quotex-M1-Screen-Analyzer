@@ -22,11 +22,6 @@ class ScreenCandleHistory(
         }
     }
 
-    /**
-     * Processes one screen-analysis frame.
-     *
-     * Returns only newly stored closed candles.
-     */
     @Synchronized
     fun update(
         screenResult: ScreenAnalysisResult,
@@ -58,7 +53,6 @@ class ScreenCandleHistory(
                 val minuteStart =
                     (timestamp / 60_000L) * 60_000L
 
-                // Do not accept future chart candles.
                 if (minuteStart > currentMinute) {
                     return@mapNotNull null
                 }
@@ -86,21 +80,19 @@ class ScreenCandleHistory(
             return emptyList()
         }
 
-        // The latest mapped minute is treated as the active candle.
         val latestMinute = mapped.maxOf { it.first }
 
         val newlyClosed = mutableListOf<Candle>()
 
-        // Keep only one candidate for each minute.
+        // FIX: Store the ScreenCandleCandidate, not the Pair.
         val onePerMinute = mapped
             .groupBy { it.first }
             .mapValues { (_, candidates) ->
-                candidates.last()
+                candidates.last().second
             }
 
         for ((minuteStart, candidate) in onePerMinute.toSortedMap()) {
 
-            // Never store the currently active candle.
             if (minuteStart >= latestMinute) continue
 
             val closeTime = minuteStart + 60_000L
@@ -133,9 +125,6 @@ class ScreenCandleHistory(
         return newlyClosed
     }
 
-    /**
-     * Returns stored candles oldest first.
-     */
     @Synchronized
     fun getClosedCandles(): List<Candle> {
         return closedCandles.values.toList()

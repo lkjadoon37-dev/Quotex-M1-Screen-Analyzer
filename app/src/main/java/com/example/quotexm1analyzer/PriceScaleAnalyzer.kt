@@ -17,8 +17,24 @@ data class PriceScaleResult(
 
 object PriceScaleAnalyzer {
 
+    // Supports different currency-pair and asset price formats.
     private val pricePattern =
-        Regex("""\b\d+\.\d{4,6}\b""")
+        Regex("""(?<![\d])\d+(?:[.,]\d{1,8})?(?![\d])""")
+
+    private fun parsePrice(text: String): Double? {
+        val match = pricePattern.find(text) ?: return null
+        val token = match.value
+
+        val normalized = when {
+            token.contains('.') && token.contains(',') ->
+                token.replace(",", "")
+            token.contains(',') ->
+                token.replace(',', '.')
+            else -> token
+        }
+
+        return normalized.toDoubleOrNull()
+    }
 
     fun analyze(
         lines: List<PriceTextLine>,
@@ -30,9 +46,10 @@ object PriceScaleAnalyzer {
             return invalid("Screen size valid nahi hai.")
         }
 
+        // Price labels are expected on the right-side price scale.
         val minX = screenWidth * 0.80
-        val minY = screenHeight * 0.20
-        val maxY = screenHeight * 0.68
+        val minY = screenHeight * 0.10
+        val maxY = screenHeight * 0.90
 
         val points = lines.mapNotNull { line ->
 
@@ -46,10 +63,7 @@ object PriceScaleAnalyzer {
                 return@mapNotNull null
             }
 
-            val match = pricePattern.find(line.text)
-                ?: return@mapNotNull null
-
-            val price = match.value.toDoubleOrNull()
+            val price = parsePrice(line.text)
                 ?: return@mapNotNull null
 
             if (!price.isFinite() || price <= 0.0) {
@@ -57,6 +71,7 @@ object PriceScaleAnalyzer {
             }
 
             PriceScalePoint(price, centerY)
+
         }.distinctBy {
             "${it.price}_${it.y.toInt()}"
         }
@@ -105,10 +120,12 @@ object PriceScaleAnalyzer {
         }.average()
 
         val tolerance =
-            points.map { it.price }.maxOrNull()!! -
-            points.map { it.price }.minOrNull()!!
+            points.maxOf { it.price } -
+            points.minOf { it.price }
 
-        if (averageError > tolerance * 0.20) {
+        if (tolerance <= 0.0 ||
+            averageError > tolerance * 0.20
+        ) {
             return invalid(
                 "Price labels aapas mein match nahi kar rahe."
             )

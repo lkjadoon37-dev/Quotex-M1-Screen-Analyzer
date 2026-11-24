@@ -23,6 +23,7 @@ class MainActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var frameInfo: TextView
+    private lateinit var ocrInfo: TextView
     private lateinit var result: TextView
     private lateinit var candleInput: EditText
 
@@ -35,10 +36,51 @@ class MainActivity : Activity() {
             context: Context?,
             intent: Intent?
         ) {
-
             when (intent?.action) {
 
                 ScreenCaptureService.ACTION_FRAME_UPDATE -> {
+
+                    // OCR update is separate from frame-health update.
+                    if (intent.hasExtra(
+                            ScreenCaptureService.EXTRA_OCR_TEXT
+                        )
+                    ) {
+                        val text = intent.getStringExtra(
+                            ScreenCaptureService.EXTRA_OCR_TEXT
+                        ).orEmpty()
+
+                        val numbers = intent.getStringExtra(
+                            ScreenCaptureService.EXTRA_OCR_NUMBERS
+                        ).orEmpty()
+
+                        ocrInfo.text = buildString {
+                            appendLine("PRICE TEXT READING")
+                            appendLine()
+                            appendLine("Detected numbers:")
+                            appendLine(
+                                if (numbers.isBlank()) {
+                                    "Abhi koi number detect nahi hua."
+                                } else {
+                                    numbers
+                                }
+                            )
+                            appendLine()
+                            appendLine("Detected text and screen positions:")
+                            append(
+                                if (text.isBlank()) {
+                                    "Koi text detect nahi hua."
+                                } else {
+                                    text
+                                }
+                            )
+                            appendLine()
+                            appendLine()
+                            append(
+                                "Note: OCR text abhi verified market price ya OHLC nahi hai."
+                            )
+                        }
+                        return
+                    }
 
                     frameCount++
 
@@ -87,14 +129,12 @@ class MainActivity : Activity() {
                         appendLine("Sampled pixels: $pixels")
                         appendLine()
                         append(
-                            "Note: Frames receive ho rahe hain. " +
-                            "Automatic candle recognition abhi tayyar nahi."
+                            "Screen frames phone par locally process ho rahe hain."
                         )
                     }
                 }
 
                 ScreenCaptureService.ACTION_CAPTURE_ERROR -> {
-
                     val message = intent.getStringExtra(
                         ScreenCaptureService.EXTRA_ERROR_MESSAGE
                     ) ?: "Unknown capture error"
@@ -107,7 +147,6 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         createScreen()
     }
 
@@ -119,7 +158,6 @@ class MainActivity : Activity() {
         }
 
         fun addText(message: String, size: Float): TextView {
-
             val view = TextView(this).apply {
                 text = message
                 textSize = size
@@ -134,21 +172,14 @@ class MainActivity : Activity() {
             label: String,
             action: () -> Unit
         ) {
-
             content.addView(Button(this).apply {
                 text = label
-                setOnClickListener {
-                    action()
-                }
+                setOnClickListener { action() }
             })
         }
 
         addText("QUOTEX AI ANALYZER M1", 23f)
-
-        addText(
-            "LOCAL SCREEN ANALYSIS",
-            17f
-        )
+        addText("LOCAL SCREEN ANALYSIS", 17f)
 
         status = addText(
             "Screen capture band hai.",
@@ -160,16 +191,15 @@ class MainActivity : Activity() {
         }
 
         addButton("CAPTURE BAND KAREIN") {
-
             stopService(
                 Intent(this, ScreenCaptureService::class.java)
             )
 
             status.text = "Screen capture band hai."
-
             frameInfo.text =
                 "Capture stopped. Dobara start karne ke liye button dabayein."
 
+            ocrInfo.text = "PRICE TEXT READING: Capture band hai."
             frameCount = 0
         }
 
@@ -178,21 +208,23 @@ class MainActivity : Activity() {
             14f
         )
 
-        addText(
-            "PRIVACY: Screen frames phone par process hote hain. " +
-            "Is app mein screenshot upload karne ka code nahi hai.",
+        ocrInfo = addText(
+            "PRICE TEXT READING\nAbhi OCR reading nahi mili.",
             14f
         )
 
         addText(
-            "CANDLE DATA ANALYSIS",
-            19f
+            "PRIVACY: Screen frames phone par process hote hain. " +
+                "Is app mein screenshot upload karne ka code nahi hai.",
+            14f
         )
+
+        addText("CANDLE DATA ANALYSIS", 19f)
 
         addText(
             "Kam az kam 35 CLOSED M1 candles enter karein. " +
-            "Har line mein Open, High, Low, Close likhein. " +
-            "Purani candle pehle aur nayi candle aakhir mein.",
+                "Har line mein Open, High, Low, Close likhein. " +
+                "Purani candle pehle aur nayi candle aakhir mein.",
             14f
         )
 
@@ -221,14 +253,11 @@ class MainActivity : Activity() {
 
         val scroll = ScrollView(this)
         scroll.addView(content)
-
         setContentView(scroll)
     }
 
     private fun startScreenCapture() {
-
         try {
-
             val manager =
                 getSystemService(MEDIA_PROJECTION_SERVICE)
                     as MediaProjectionManager
@@ -242,44 +271,38 @@ class MainActivity : Activity() {
                 "Screen capture permission ka intezar hai."
 
         } catch (e: Exception) {
-
-            status.text =
-                "Capture start error: ${e.message}"
+            status.text = "Capture start error: ${e.message}"
         }
     }
 
     private fun registerFrameReceiver() {
-
         if (receiverRegistered) return
 
         val filter = IntentFilter().apply {
-            addAction(
-                ScreenCaptureService.ACTION_FRAME_UPDATE
-            )
-
-            addAction(
-                ScreenCaptureService.ACTION_CAPTURE_ERROR
-            )
+            addAction(ScreenCaptureService.ACTION_FRAME_UPDATE)
+            addAction(ScreenCaptureService.ACTION_CAPTURE_ERROR)
         }
 
         if (Build.VERSION.SDK_INT >= 33) {
-
             registerReceiver(
                 frameReceiver,
                 filter,
                 Context.RECEIVER_NOT_EXPORTED
             )
-
         } else {
-
             @Suppress("DEPRECATION")
-            registerReceiver(
-                frameReceiver,
-                filter
-            )
+            registerReceiver(frameReceiver, filter)
         }
 
         receiverRegistered = true
+
+        val previousOcr =
+            ScreenCaptureService.latestOcrText
+
+        if (previousOcr.isNotBlank()) {
+            ocrInfo.text =
+                "PRICE TEXT READING\n$previousOcr"
+        }
     }
 
     override fun onStart() {
@@ -288,7 +311,6 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
-
         if (receiverRegistered) {
             unregisterReceiver(frameReceiver)
             receiverRegistered = false
@@ -301,7 +323,6 @@ class MainActivity : Activity() {
         value: Double?,
         decimals: Int
     ): String {
-
         return value?.let {
             String.format(
                 Locale.US,
@@ -312,22 +333,16 @@ class MainActivity : Activity() {
     }
 
     private fun analyzeCandles() {
-
         try {
-
             val lines = candleInput.text.toString()
                 .lines()
-                .filter {
-                    it.isNotBlank()
-                }
+                .filter { it.isNotBlank() }
 
             val candles = lines.mapIndexed { index, line ->
 
                 val values = line.trim()
                     .split(Regex("[,;\\s]+"))
-                    .map {
-                        it.toDouble()
-                    }
+                    .map { it.toDouble() }
 
                 require(values.size == 4) {
                     "Line ${index + 1}: 4 values zaroori hain."
@@ -337,8 +352,8 @@ class MainActivity : Activity() {
 
                 require(
                     high >= maxOf(open, close) &&
-                    low <= minOf(open, close) &&
-                    high >= low
+                        low <= minOf(open, close) &&
+                        high >= low
                 ) {
                     "Line ${index + 1}: OHLC values check karein."
                 }
@@ -352,43 +367,24 @@ class MainActivity : Activity() {
                 )
             }
 
-            val analysis =
-                AnalysisEngine.analyze(candles)
+            val analysis = AnalysisEngine.analyze(candles)
 
             result.text = buildString {
-
                 appendLine("SIGNAL: ${analysis.signal}")
                 appendLine()
-                appendLine(
-                    "Setup Strength: ${analysis.strength}%"
-                )
+                appendLine("Setup Strength: ${analysis.strength}%")
                 appendLine()
+                appendLine("EMA 9: ${formatValue(analysis.ema9, 5)}")
+                appendLine("EMA 21: ${formatValue(analysis.ema21, 5)}")
+                appendLine("RSI 14: ${formatValue(analysis.rsi14, 2)}")
+                appendLine("MACD: ${formatValue(analysis.macd, 6)}")
                 appendLine(
-                    "EMA 9: ${formatValue(analysis.ema9, 5)}"
+                    "MACD Signal: ${formatValue(analysis.macdSignal, 6)}"
                 )
+                appendLine("Support: ${formatValue(analysis.support, 5)}")
                 appendLine(
-                    "EMA 21: ${formatValue(analysis.ema21, 5)}"
+                    "Resistance: ${formatValue(analysis.resistance, 5)}"
                 )
-                appendLine(
-                    "RSI 14: ${formatValue(analysis.rsi14, 2)}"
-                )
-                appendLine(
-                    "MACD: ${formatValue(analysis.macd, 6)}"
-                )
-                appendLine(
-                    "MACD Signal: ${
-                        formatValue(analysis.macdSignal, 6)
-                    }"
-                )
-                appendLine(
-                    "Support: ${formatValue(analysis.support, 5)}"
-                )
-                appendLine(
-                    "Resistance: ${
-                        formatValue(analysis.resistance, 5)
-                    }"
-                )
-
                 appendLine()
                 appendLine("EXPLANATION:")
 
@@ -398,16 +394,14 @@ class MainActivity : Activity() {
 
                 appendLine()
                 append(
-                    "Strength score win probability nahi hai. " +
-                    "Demo par test karein."
+                    "Strength score win probability nahi hai. Demo par test karein."
                 )
             }
 
         } catch (e: Exception) {
-
             result.text =
                 "Error: ${e.message}\n\n" +
-                "Har candle mein 4 valid OHLC values dein."
+                    "Har candle mein 4 valid OHLC values dein."
         }
     }
 
@@ -417,27 +411,19 @@ class MainActivity : Activity() {
         resultCode: Int,
         data: Intent?
     ) {
-
-        super.onActivityResult(
-            requestCode,
-            resultCode,
-            data
-        )
+        super.onActivityResult(requestCode, resultCode, data)
 
         if (
             requestCode == captureRequest &&
             resultCode == RESULT_OK &&
             data != null
         ) {
-
             val serviceIntent =
                 Intent(this, ScreenCaptureService::class.java).apply {
-
                     putExtra(
                         ScreenCaptureService.EXTRA_RESULT_CODE,
                         resultCode
                     )
-
                     putExtra(
                         ScreenCaptureService.EXTRA_RESULT_DATA,
                         data
@@ -445,7 +431,6 @@ class MainActivity : Activity() {
                 }
 
             try {
-
                 if (Build.VERSION.SDK_INT >= 26) {
                     startForegroundService(serviceIntent)
                 } else {
@@ -453,23 +438,17 @@ class MainActivity : Activity() {
                 }
 
                 frameCount = 0
-
                 status.text =
                     "Capture permission mil gayi. Frames ka intezar hai."
-
-                frameInfo.text =
-                    "FRAME STATUS: STARTING..."
+                frameInfo.text = "FRAME STATUS: STARTING..."
+                ocrInfo.text = "PRICE TEXT READING: Intezaar hai..."
 
             } catch (e: Exception) {
-
-                status.text =
-                    "Service start error: ${e.message}"
+                status.text = "Service start error: ${e.message}"
             }
 
         } else {
-
-            status.text =
-                "Screen capture permission nahi mili."
+            status.text = "Screen capture permission nahi mili."
         }
     }
 }

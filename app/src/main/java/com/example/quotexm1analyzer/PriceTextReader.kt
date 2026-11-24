@@ -1,3 +1,4 @@
+
 package com.example.quotexm1analyzer
 
 import android.graphics.Bitmap
@@ -28,18 +29,24 @@ class PriceTextReader {
 
     private val isReading = AtomicBoolean(false)
 
-    fun read(
-        source: Bitmap,
-        callback: (PriceReadResult) -> Unit
-    ) {
+    fun read(source: Bitmap, callback: (PriceReadResult) -> Unit) {
+
         if (!isReading.compareAndSet(false, true)) {
+            callback(
+                PriceReadResult(
+                    lines = emptyList(),
+                    numericValues = emptyList(),
+                    error = "OCR busy; previous frame is still processing."
+                )
+            )
             return
         }
 
-        val bitmap = source.copy(
-            Bitmap.Config.ARGB_8888,
-            false
-        )
+        val bitmap = try {
+            source.copy(Bitmap.Config.ARGB_8888, false)
+        } catch (error: Exception) {
+            null
+        }
 
         if (bitmap == null) {
             isReading.set(false)
@@ -53,6 +60,14 @@ class PriceTextReader {
             return
         }
 
+        val callbackDelivered = AtomicBoolean(false)
+
+        fun deliver(result: PriceReadResult) {
+            if (callbackDelivered.compareAndSet(false, true)) {
+                callback(result)
+            }
+        }
+
         try {
             val image = InputImage.fromBitmap(bitmap, 0)
 
@@ -63,7 +78,6 @@ class PriceTextReader {
 
                     for (block in result.textBlocks) {
                         for (line in block.lines) {
-
                             val bounds = line.boundingBox ?: continue
 
                             lines.add(
@@ -86,7 +100,7 @@ class PriceTextReader {
                         }
                         .distinct()
 
-                    callback(
+                    deliver(
                         PriceReadResult(
                             lines = lines,
                             numericValues = numericValues
@@ -95,31 +109,36 @@ class PriceTextReader {
                 }
                 .addOnFailureListener { error ->
 
-                    callback(
+                    deliver(
                         PriceReadResult(
                             lines = emptyList(),
                             numericValues = emptyList(),
-                            error = error.message
-                                ?: "OCR reading failed."
+                            error = error.message ?: "OCR reading failed."
                         )
                     )
                 }
                 .addOnCompleteListener {
-                    bitmap.recycle()
+
+                    if (!bitmap.isRecycled) {
+                        bitmap.recycle()
+                    }
+
                     isReading.set(false)
                 }
 
         } catch (error: Exception) {
 
-            bitmap.recycle()
+            if (!bitmap.isRecycled) {
+                bitmap.recycle()
+            }
+
             isReading.set(false)
 
-            callback(
+            deliver(
                 PriceReadResult(
                     lines = emptyList(),
                     numericValues = emptyList(),
-                    error = error.message
-                        ?: "OCR processing error."
+                    error = error.message ?: "OCR processing error."
                 )
             )
         }

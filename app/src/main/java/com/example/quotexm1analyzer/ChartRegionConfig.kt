@@ -2,19 +2,21 @@
 package com.example.quotexm1analyzer
 
 /**
- * Defines chart and price-scale regions in normalized coordinates.
- * Coordinates range from 0.0 to 1.0.
+ * Quotex chart region calibrated from the supplied
+ * 1220 x 2712 screen capture.
+ *
+ * Coordinates are normalized from 0.0 to 1.0.
  */
 data class ChartRegionConfig(
     val chartLeft: Float = 0.05f,
-    val chartTop: Float = 0.10f,
+    val chartTop: Float = 0.30f,
     val chartRight: Float = 0.88f,
-    val chartBottom: Float = 0.88f,
+    val chartBottom: Float = 0.73f,
 
-    val priceScaleLeft: Float = 0.88f,
-    val priceScaleTop: Float = 0.10f,
+    val priceScaleLeft: Float = 0.85f,
+    val priceScaleTop: Float = 0.30f,
     val priceScaleRight: Float = 0.99f,
-    val priceScaleBottom: Float = 0.88f
+    val priceScaleBottom: Float = 0.73f
 ) {
     init {
         require(chartLeft in 0f..1f)

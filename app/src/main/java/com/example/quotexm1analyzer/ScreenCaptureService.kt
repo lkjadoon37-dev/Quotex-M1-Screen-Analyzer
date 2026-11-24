@@ -26,6 +26,7 @@ import android.view.WindowManager
 class ScreenCaptureService : Service() {
 
     companion object {
+
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
 
@@ -48,6 +49,9 @@ class ScreenCaptureService : Service() {
         const val EXTRA_SCREEN_ANALYSIS = "screen_analysis"
         const val EXTRA_CANDLE_COUNT = "candle_count"
         const val EXTRA_SCALE_POINTS = "scale_points"
+
+        const val EXTRA_TIME_AXIS_STATUS = "time_axis_status"
+        const val EXTRA_CLOSED_CANDLE_COUNT = "closed_candle_count"
 
         private const val CHANNEL_ID = "quotex_capture"
         private const val NOTIFICATION_ID = 51
@@ -92,6 +96,14 @@ class ScreenCaptureService : Service() {
         @Volatile
         var latestScalePoints: Int = 0
             private set
+
+        @Volatile
+        var latestTimeAxisStatus: String = ""
+            private set
+
+        @Volatile
+        var latestClosedCandleCount: Int = 0
+            private set
     }
 
     private var projection: MediaProjection? = null
@@ -101,7 +113,14 @@ class ScreenCaptureService : Service() {
     private var workerHandler: Handler? = null
     private var priceReader: PriceTextReader? = null
 
+    // Existing screen candle detector
     private val screenAnalyzer = CandleScreenAnalyzer()
+
+    // New chart time reader
+    private val timeAxisAnalyzer = TimeAxisAnalyzer()
+
+    // New closed candle history
+    private val candleHistory = ScreenCandleHistory()
 
     private var lastFrameTime = 0L
     private var isReleased = false
@@ -118,6 +137,7 @@ class ScreenCaptureService : Service() {
         createNotificationChannel()
 
         try {
+
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(
                     NOTIFICATION_ID,
@@ -125,7 +145,10 @@ class ScreenCaptureService : Service() {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 )
             } else {
-                startForeground(NOTIFICATION_ID, buildNotification())
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification()
+                )
             }
 
             val resultCode =
@@ -143,7 +166,9 @@ class ScreenCaptureService : Service() {
                 }
 
             if (resultData == null) {
-                sendError("Screen capture permission data nahi mili.")
+                sendError(
+                    "Screen capture permission data nahi mili."
+                )
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -152,7 +177,8 @@ class ScreenCaptureService : Service() {
                 getSystemService(MEDIA_PROJECTION_SERVICE)
                     as MediaProjectionManager
 
-            projection = manager.getMediaProjection(resultCode, resultData)
+            projection =
+                manager.getMediaProjection(resultCode, resultData)
 
             projection?.registerCallback(
                 object : MediaProjection.Callback() {
@@ -165,11 +191,17 @@ class ScreenCaptureService : Service() {
             )
 
             priceReader = PriceTextReader()
+
             startCapture()
 
         } catch (e: Exception) {
+
             Log.e(TAG, "Capture start failed", e)
-            sendError(e.message ?: "Capture start nahi ho saka.")
+
+            sendError(
+                e.message ?: "Capture start nahi ho saka."
+            )
+
             releaseCapture()
             stopSelf()
         }
@@ -193,7 +225,9 @@ class ScreenCaptureService : Service() {
             "Screen dimensions invalid hain."
         }
 
-        worker = HandlerThread("LocalFrameReader").also {
+        worker = HandlerThread(
+            "LocalFrameReader"
+        ).also {
             it.start()
         }
 
@@ -214,20 +248,28 @@ class ScreenCaptureService : Service() {
                 var frameBitmap: Bitmap? = null
 
                 try {
-                    image = imageReader.acquireLatestImage()
+
+                    image =
+                        imageReader.acquireLatestImage()
 
                     if (image != null) {
-                        val now = System.currentTimeMillis()
 
-                        if (now - lastFrameTime >= 1000L) {
-                            lastFrameTime = now
+                        val capturedAtMillis =
+                            System.currentTimeMillis()
+
+                        if (
+                            capturedAtMillis - lastFrameTime >= 1000L
+                        ) {
+
+                            lastFrameTime = capturedAtMillis
 
                             val plane = image.planes[0]
                             val buffer = plane.buffer
                             val pixelStride = plane.pixelStride
                             val rowStride = plane.rowStride
 
-                            val paddedWidth = rowStride / pixelStride
+                            val paddedWidth =
+                                rowStride / pixelStride
 
                             paddedBitmap = Bitmap.createBitmap(
                                 paddedWidth,
@@ -236,7 +278,10 @@ class ScreenCaptureService : Service() {
                             )
 
                             buffer.rewind()
-                            paddedBitmap.copyPixelsFromBuffer(buffer)
+
+                            paddedBitmap.copyPixelsFromBuffer(
+                                buffer
+                            )
 
                             frameBitmap = Bitmap.createBitmap(
                                 paddedBitmap,
@@ -246,49 +291,91 @@ class ScreenCaptureService : Service() {
                                 image.height
                             )
 
-                            latestFrameWidth = frameBitmap.width
-                            latestFrameHeight = frameBitmap.height
+                            latestFrameWidth =
+                                frameBitmap.width
+
+                            latestFrameHeight =
+                                frameBitmap.height
 
                             val health =
                                 FrameProcessor.inspect(frameBitmap)
 
-                            latestFrameBrightness = health.meanLuma
-                            latestFrameContrast = health.contrast
-                            latestFramePixels = health.sampledPixels
+                            latestFrameBrightness =
+                                health.meanLuma
 
-                            val update = Intent(ACTION_FRAME_UPDATE).apply {
-                                setPackage(packageName)
-                                putExtra(EXTRA_FRAME_WIDTH, health.width)
-                                putExtra(EXTRA_FRAME_HEIGHT, health.height)
-                                putExtra(EXTRA_FRAME_BRIGHTNESS, health.meanLuma)
-                                putExtra(EXTRA_FRAME_CONTRAST, health.contrast)
-                                putExtra(EXTRA_FRAME_PIXELS, health.sampledPixels)
-                            }
+                            latestFrameContrast =
+                                health.contrast
+
+                            latestFramePixels =
+                                health.sampledPixels
+
+                            val update =
+                                Intent(ACTION_FRAME_UPDATE).apply {
+
+                                    setPackage(packageName)
+
+                                    putExtra(
+                                        EXTRA_FRAME_WIDTH,
+                                        health.width
+                                    )
+
+                                    putExtra(
+                                        EXTRA_FRAME_HEIGHT,
+                                        health.height
+                                    )
+
+                                    putExtra(
+                                        EXTRA_FRAME_BRIGHTNESS,
+                                        health.meanLuma
+                                    )
+
+                                    putExtra(
+                                        EXTRA_FRAME_CONTRAST,
+                                        health.contrast
+                                    )
+
+                                    putExtra(
+                                        EXTRA_FRAME_PIXELS,
+                                        health.sampledPixels
+                                    )
+                                }
 
                             sendBroadcast(update)
 
-                            val analysisBitmap = frameBitmap.copy(
-                                Bitmap.Config.ARGB_8888,
-                                false
-                            )
+                            val analysisBitmap =
+                                frameBitmap.copy(
+                                    Bitmap.Config.ARGB_8888,
+                                    false
+                                )
 
                             priceReader?.read(frameBitmap) { result ->
 
                                 if (result.error != null) {
-                                    Log.e(TAG, "OCR error: ${result.error}")
 
-                                    latestOcrText = "OCR error: ${result.error}"
+                                    Log.e(
+                                        TAG,
+                                        "OCR error: ${result.error}"
+                                    )
+
+                                    latestOcrText =
+                                        "OCR error: ${result.error}"
+
                                     latestOcrNumbers = ""
 
-                                    if (analysisBitmap != null &&
-                                        !analysisBitmap.isRecycled
-                                    ) {
+                                    if (!analysisBitmap.isRecycled) {
                                         analysisBitmap.recycle()
                                     }
+
                                 } else {
-                                    val text = result.lines.joinToString("\n") {
-                                        "${it.text} [${it.left},${it.top},${it.right},${it.bottom}]"
-                                    }
+
+                                    val text =
+                                        result.lines.joinToString("\n") {
+                                            "${it.text} " +
+                                                "[${it.left}," +
+                                                "${it.top}," +
+                                                "${it.right}," +
+                                                "${it.bottom}]"
+                                        }
 
                                     val numbers =
                                         result.numericValues.joinToString(",")
@@ -298,69 +385,165 @@ class ScreenCaptureService : Service() {
 
                                     val ocrUpdate =
                                         Intent(ACTION_FRAME_UPDATE).apply {
+
                                             setPackage(packageName)
-                                            putExtra(EXTRA_OCR_TEXT, text)
-                                            putExtra(EXTRA_OCR_NUMBERS, numbers)
+
+                                            putExtra(
+                                                EXTRA_OCR_TEXT,
+                                                text
+                                            )
+
+                                            putExtra(
+                                                EXTRA_OCR_NUMBERS,
+                                                numbers
+                                            )
                                         }
 
                                     sendBroadcast(ocrUpdate)
 
-                                    if (analysisBitmap != null) {
-                                        val handler = workerHandler
+                                    val handler = workerHandler
 
-                                        if (handler != null) {
-                                            handler.post {
-                                                try {
-                                                    val analysis =
-                                                        screenAnalyzer.analyzeFrame(
-                                                            analysisBitmap,
-                                                            result.lines
+                                    if (handler != null) {
+
+                                        handler.post {
+
+                                            try {
+
+                                                // 1. Detect screen candles
+                                                val analysis =
+                                                    screenAnalyzer.analyzeFrame(
+                                                        analysisBitmap,
+                                                        result.lines
+                                                    )
+
+                                                latestCandleCount =
+                                                    analysis.candles.size
+
+                                                latestScalePoints =
+                                                    analysis.scalePoints
+
+                                                // 2. Read chart time labels
+                                                val timeAxis =
+                                                    timeAxisAnalyzer.analyze(
+                                                        lines = result.lines,
+                                                        screenWidth =
+                                                            analysisBitmap.width,
+                                                        screenHeight =
+                                                            analysisBitmap.height
+                                                    )
+
+                                                latestTimeAxisStatus =
+                                                    timeAxis.message
+
+                                                // 3. Store inferred closed candles
+                                                val newlyClosed =
+                                                    candleHistory.update(
+                                                        screenResult = analysis,
+                                                        timeAxis = timeAxis,
+                                                        capturedAtMillis =
+                                                            capturedAtMillis
+                                                    )
+
+                                                latestClosedCandleCount =
+                                                    candleHistory.getCount()
+
+                                                // 4. Prepare diagnostic status
+                                                val combinedMessage =
+                                                    analysis.message +
+                                                        " | Time: " +
+                                                        timeAxis.message +
+                                                        " | New closed: " +
+                                                        newlyClosed.size +
+                                                        " | History: " +
+                                                        latestClosedCandleCount
+
+                                                latestScreenAnalysis =
+                                                    combinedMessage
+
+                                                // 5. Send screen update
+                                                val analysisUpdate =
+                                                    Intent(
+                                                        ACTION_FRAME_UPDATE
+                                                    ).apply {
+
+                                                        setPackage(packageName)
+
+                                                        putExtra(
+                                                            EXTRA_SCREEN_ANALYSIS,
+                                                            combinedMessage
                                                         )
 
-                                                    latestScreenAnalysis =
-                                                        analysis.message
-                                                    latestCandleCount =
-                                                        analysis.candles.size
-                                                    latestScalePoints =
-                                                        analysis.scalePoints
+                                                        putExtra(
+                                                            EXTRA_CANDLE_COUNT,
+                                                            analysis.candles.size
+                                                        )
 
-                                                    val analysisUpdate =
-                                                        Intent(ACTION_FRAME_UPDATE).apply {
-                                                            setPackage(packageName)
-                                                            putExtra(
-                                                                EXTRA_SCREEN_ANALYSIS,
-                                                                analysis.message
-                                                            )
-                                                            putExtra(
-                                                                EXTRA_CANDLE_COUNT,
-                                                                analysis.candles.size
-                                                            )
-                                                            putExtra(
-                                                                EXTRA_SCALE_POINTS,
-                                                                analysis.scalePoints
-                                                            )
-                                                        }
+                                                        putExtra(
+                                                            EXTRA_SCALE_POINTS,
+                                                            analysis.scalePoints
+                                                        )
 
-                                                    sendBroadcast(analysisUpdate)
+                                                        putExtra(
+                                                            EXTRA_TIME_AXIS_STATUS,
+                                                            timeAxis.message
+                                                        )
 
-                                                    Log.i(
-                                                        TAG,
-                                                        "Local screen analysis: ${analysis.message}"
-                                                    )
-
-                                                } catch (error: Exception) {
-                                                    Log.e(
-                                                        TAG,
-                                                        "Screen analysis failed",
-                                                        error
-                                                    )
-                                                } finally {
-                                                    if (!analysisBitmap.isRecycled) {
-                                                        analysisBitmap.recycle()
+                                                        putExtra(
+                                                            EXTRA_CLOSED_CANDLE_COUNT,
+                                                            latestClosedCandleCount
+                                                        )
                                                     }
+
+                                                sendBroadcast(
+                                                    analysisUpdate
+                                                )
+
+                                                Log.i(
+                                                    TAG,
+                                                    "Screen: ${analysis.message}"
+                                                )
+
+                                                Log.i(
+                                                    TAG,
+                                                    "Time axis: ${timeAxis.message}"
+                                                )
+
+                                                Log.i(
+                                                    TAG,
+                                                    "New closed candles: ${newlyClosed.size}"
+                                                )
+
+                                                Log.i(
+                                                    TAG,
+                                                    "Stored history: ${candleHistory.getCount()}"
+                                                )
+
+                                            } catch (error: Exception) {
+
+                                                Log.e(
+                                                    TAG,
+                                                    "Screen analysis failed",
+                                                    error
+                                                )
+
+                                                latestScreenAnalysis =
+                                                    "Analysis error: " +
+                                                        (error.message
+                                                            ?: "Unknown error")
+
+                                            } finally {
+
+                                                if (
+                                                    !analysisBitmap.isRecycled
+                                                ) {
+                                                    analysisBitmap.recycle()
                                                 }
                                             }
-                                        } else {
+                                        }
+
+                                    } else {
+
+                                        if (!analysisBitmap.isRecycled) {
                                             analysisBitmap.recycle()
                                         }
                                     }
@@ -370,33 +553,45 @@ class ScreenCaptureService : Service() {
                     }
 
                 } catch (e: Exception) {
-                    Log.e(TAG, "Local frame processing error", e)
-                    sendError(e.message ?: "Frame processing error")
+
+                    Log.e(
+                        TAG,
+                        "Local frame processing error",
+                        e
+                    )
+
+                    sendError(
+                        e.message ?: "Frame processing error"
+                    )
 
                 } finally {
-                    if (frameBitmap != null &&
+
+                    if (
+                        frameBitmap != null &&
                         frameBitmap !== paddedBitmap
                     ) {
                         frameBitmap.recycle()
                     }
 
                     paddedBitmap?.recycle()
+
                     image?.close()
                 }
             },
             workerHandler
         )
 
-        virtualDisplay = projection?.createVirtualDisplay(
-            "QuotexLocalCapture",
-            width,
-            height,
-            density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            reader?.surface,
-            null,
-            workerHandler
-        )
+        virtualDisplay =
+            projection?.createVirtualDisplay(
+                "QuotexLocalCapture",
+                width,
+                height,
+                density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader?.surface,
+                null,
+                workerHandler
+            )
 
         if (virtualDisplay == null) {
             throw IllegalStateException(
@@ -406,21 +601,34 @@ class ScreenCaptureService : Service() {
     }
 
     private fun sendError(message: String) {
-        val errorIntent = Intent(ACTION_CAPTURE_ERROR).apply {
-            setPackage(packageName)
-            putExtra(EXTRA_ERROR_MESSAGE, message)
-        }
+
+        val errorIntent =
+            Intent(ACTION_CAPTURE_ERROR).apply {
+
+                setPackage(packageName)
+
+                putExtra(
+                    EXTRA_ERROR_MESSAGE,
+                    message
+                )
+            }
+
         sendBroadcast(errorIntent)
     }
 
     private fun releaseCapture(
         stopProjection: Boolean = true
     ) {
+
         if (isReleased) return
+
         isReleased = true
 
         try {
-            reader?.setOnImageAvailableListener(null, null)
+            reader?.setOnImageAvailableListener(
+                null,
+                null
+            )
         } catch (_: Exception) {}
 
         try {
@@ -455,20 +663,30 @@ class ScreenCaptureService : Service() {
         worker = null
         workerHandler = null
 
+        // Clear temporary candle history when capture stops
+        candleHistory.clear()
+
         latestFrameWidth = 0
         latestFrameHeight = 0
         latestFrameBrightness = 0.0
         latestFrameContrast = 0.0
         latestFramePixels = 0
+
         latestOcrText = ""
         latestOcrNumbers = ""
+
         latestScreenAnalysis = ""
         latestCandleCount = 0
         latestScalePoints = 0
+
+        latestTimeAxisStatus = ""
+        latestClosedCandleCount = 0
     }
 
     private fun createNotificationChannel() {
+
         if (Build.VERSION.SDK_INT >= 26) {
+
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Quotex screen capture",
@@ -481,23 +699,35 @@ class ScreenCaptureService : Service() {
     }
 
     private fun buildNotification(): Notification {
+
         return if (Build.VERSION.SDK_INT >= 26) {
+
             Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("Quotex local capture active")
+                .setContentTitle(
+                    "Quotex local capture active"
+                )
                 .setContentText(
                     "Screen frames phone par locally process ho rahe hain."
                 )
-                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setSmallIcon(
+                    android.R.drawable.ic_menu_view
+                )
                 .setOngoing(true)
                 .build()
+
         } else {
+
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("Quotex local capture active")
+                .setContentTitle(
+                    "Quotex local capture active"
+                )
                 .setContentText(
                     "Screen frames phone par locally process ho rahe hain."
                 )
-                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setSmallIcon(
+                    android.R.drawable.ic_menu_view
+                )
                 .setOngoing(true)
                 .build()
         }
@@ -508,5 +738,7 @@ class ScreenCaptureService : Service() {
         super.onDestroy()
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent?): IBinder? {
+        return null
+    }
 }

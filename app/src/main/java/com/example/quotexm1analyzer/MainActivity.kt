@@ -24,6 +24,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var frameInfo: TextView
     private lateinit var ocrInfo: TextView
+    private lateinit var analysisInfo: TextView
     private lateinit var result: TextView
     private lateinit var candleInput: EditText
 
@@ -32,15 +33,45 @@ class MainActivity : Activity() {
 
     private val frameReceiver = object : BroadcastReceiver() {
 
-        override fun onReceive(
-            context: Context?,
-            intent: Intent?
-        ) {
+        override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
 
                 ScreenCaptureService.ACTION_FRAME_UPDATE -> {
 
-                    // OCR update is separate from frame-health update.
+                    // Screen analyzer result
+                    if (intent.hasExtra(
+                            ScreenCaptureService.EXTRA_SCREEN_ANALYSIS
+                        )
+                    ) {
+                        val message = intent.getStringExtra(
+                            ScreenCaptureService.EXTRA_SCREEN_ANALYSIS
+                        ).orEmpty()
+
+                        val candleCount = intent.getIntExtra(
+                            ScreenCaptureService.EXTRA_CANDLE_COUNT, 0
+                        )
+
+                        val scalePoints = intent.getIntExtra(
+                            ScreenCaptureService.EXTRA_SCALE_POINTS, 0
+                        )
+
+                        analysisInfo.text = buildString {
+                            appendLine("LOCAL CANDLE SCREEN ANALYSIS")
+                            appendLine()
+                            appendLine("Detected candle candidates: $candleCount")
+                            appendLine("Price scale points: $scalePoints")
+                            appendLine()
+                            append(message)
+                            appendLine()
+                            appendLine()
+                            append(
+                                "Note: Candle timing aur OHLC abhi verify hona baqi hai. Yeh CALL/PUT signal nahi hai."
+                            )
+                        }
+                        return
+                    }
+
+                    // OCR update
                     if (intent.hasExtra(
                             ScreenCaptureService.EXTRA_OCR_TEXT
                         )
@@ -85,28 +116,23 @@ class MainActivity : Activity() {
                     frameCount++
 
                     val width = intent.getIntExtra(
-                        ScreenCaptureService.EXTRA_FRAME_WIDTH,
-                        0
+                        ScreenCaptureService.EXTRA_FRAME_WIDTH, 0
                     )
 
                     val height = intent.getIntExtra(
-                        ScreenCaptureService.EXTRA_FRAME_HEIGHT,
-                        0
+                        ScreenCaptureService.EXTRA_FRAME_HEIGHT, 0
                     )
 
                     val brightness = intent.getDoubleExtra(
-                        ScreenCaptureService.EXTRA_FRAME_BRIGHTNESS,
-                        0.0
+                        ScreenCaptureService.EXTRA_FRAME_BRIGHTNESS, 0.0
                     )
 
                     val contrast = intent.getDoubleExtra(
-                        ScreenCaptureService.EXTRA_FRAME_CONTRAST,
-                        0.0
+                        ScreenCaptureService.EXTRA_FRAME_CONTRAST, 0.0
                     )
 
                     val pixels = intent.getIntExtra(
-                        ScreenCaptureService.EXTRA_FRAME_PIXELS,
-                        0
+                        ScreenCaptureService.EXTRA_FRAME_PIXELS, 0
                     )
 
                     status.text =
@@ -163,15 +189,11 @@ class MainActivity : Activity() {
                 textSize = size
                 setPadding(4, 10, 4, 10)
             }
-
             content.addView(view)
             return view
         }
 
-        fun addButton(
-            label: String,
-            action: () -> Unit
-        ) {
+        fun addButton(label: String, action: () -> Unit) {
             content.addView(Button(this).apply {
                 text = label
                 setOnClickListener { action() }
@@ -181,25 +203,21 @@ class MainActivity : Activity() {
         addText("QUOTEX AI ANALYZER M1", 23f)
         addText("LOCAL SCREEN ANALYSIS", 17f)
 
-        status = addText(
-            "Screen capture band hai.",
-            16f
-        )
+        status = addText("Screen capture band hai.", 16f)
 
         addButton("SCREEN CAPTURE SHURU KAREIN") {
             startScreenCapture()
         }
 
         addButton("CAPTURE BAND KAREIN") {
-            stopService(
-                Intent(this, ScreenCaptureService::class.java)
-            )
+            stopService(Intent(this, ScreenCaptureService::class.java))
 
             status.text = "Screen capture band hai."
             frameInfo.text =
                 "Capture stopped. Dobara start karne ke liye button dabayein."
 
             ocrInfo.text = "PRICE TEXT READING: Capture band hai."
+            analysisInfo.text = "LOCAL CANDLE SCREEN ANALYSIS: Capture band hai."
             frameCount = 0
         }
 
@@ -211,6 +229,11 @@ class MainActivity : Activity() {
         ocrInfo = addText(
             "PRICE TEXT READING\nAbhi OCR reading nahi mili.",
             14f
+        )
+
+        analysisInfo = addText(
+            "LOCAL CANDLE SCREEN ANALYSIS\nAbhi analysis result nahi mila.",
+            15f
         )
 
         addText(
@@ -267,8 +290,7 @@ class MainActivity : Activity() {
                 captureRequest
             )
 
-            status.text =
-                "Screen capture permission ka intezar hai."
+            status.text = "Screen capture permission ka intezar hai."
 
         } catch (e: Exception) {
             status.text = "Capture start error: ${e.message}"
@@ -296,12 +318,10 @@ class MainActivity : Activity() {
 
         receiverRegistered = true
 
-        val previousOcr =
-            ScreenCaptureService.latestOcrText
+        val previousOcr = ScreenCaptureService.latestOcrText
 
         if (previousOcr.isNotBlank()) {
-            ocrInfo.text =
-                "PRICE TEXT READING\n$previousOcr"
+            ocrInfo.text = "PRICE TEXT READING\n$previousOcr"
         }
     }
 
@@ -315,20 +335,12 @@ class MainActivity : Activity() {
             unregisterReceiver(frameReceiver)
             receiverRegistered = false
         }
-
         super.onStop()
     }
 
-    private fun formatValue(
-        value: Double?,
-        decimals: Int
-    ): String {
+    private fun formatValue(value: Double?, decimals: Int): String {
         return value?.let {
-            String.format(
-                Locale.US,
-                "%.${decimals}f",
-                it
-            )
+            String.format(Locale.US, "%.${decimals}f", it)
         } ?: "N/A"
     }
 
@@ -442,6 +454,8 @@ class MainActivity : Activity() {
                     "Capture permission mil gayi. Frames ka intezar hai."
                 frameInfo.text = "FRAME STATUS: STARTING..."
                 ocrInfo.text = "PRICE TEXT READING: Intezaar hai..."
+                analysisInfo.text =
+                    "LOCAL CANDLE SCREEN ANALYSIS: Intezaar hai..."
 
             } catch (e: Exception) {
                 status.text = "Service start error: ${e.message}"

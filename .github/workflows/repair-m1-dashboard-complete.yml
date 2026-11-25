@@ -1,4 +1,4 @@
-
+ 
 name: Repair M1 Dashboard Complete
 
 on:
@@ -10,6 +10,7 @@ permissions:
 jobs:
   repair-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -31,6 +32,7 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
+          import re
 
           root = Path("app/src/main/java/com/example/quotexm1analyzer")
           axis_file = root / "TimeAxisAnalyzer.kt"
@@ -38,49 +40,57 @@ jobs:
 
           axis = axis_file.read_text()
 
-          old = """        if (x < sorted.first().x || x > sorted.last().x) {
-              return null
-          }
+          # Repair time-axis mapping, allowing only limited
+          # extrapolation outside the first and last time labels.
+          pattern = r"""        if \(x < sorted\.first\(\)\.x \|\| x > sorted\.last\(\)\.x\) \{
+                      return null
+                  \}
 
-          for (i in 0 until sorted.lastIndex) {"""
+                  for \(i in 0 until sorted\.lastIndex\) \{"""
 
-          new = """        // Allow bounded extrapolation for candles slightly
-        // outside the first or last detected time label.
-          val first = sorted.first()
-          val last = sorted.last()
-          val firstGap = sorted[1].x - first.x
-          val lastGap = last.x - sorted[sorted.lastIndex - 1].x
-          if (firstGap <= 0 || lastGap <= 0) return null
+          replacement = """        // Allow bounded extrapolation for candles slightly
+                  // outside the first or last detected time label.
+                  val first = sorted.first()
+                  val last = sorted.last()
+                  val firstGap = sorted[1].x - first.x
+                  val lastGap = last.x - sorted[sorted.lastIndex - 1].x
+                  if (firstGap <= 0 || lastGap <= 0) return null
 
-          if (x < first.x) {
-              if (first.x - x > firstGap) return null
-              val next = sorted[1]
-              val fraction = (x - first.x).toDouble() / firstGap
-              return first.minuteOfDay +
-                  (next.minuteOfDay - first.minuteOfDay) * fraction
-          }
+                  if (x < first.x) {
+                      if (first.x - x > firstGap) return null
+                      val next = sorted[1]
+                      val fraction = (x - first.x).toDouble() / firstGap
+                      return first.minuteOfDay +
+                          (next.minuteOfDay - first.minuteOfDay) * fraction
+                  }
 
-          if (x > last.x) {
-              if (x - last.x > lastGap) return null
-              val previous = sorted[sorted.lastIndex - 1]
-              val fraction = (x - previous.x).toDouble() /
-                  (last.x - previous.x)
-              return previous.minuteOfDay +
-                  (last.minuteOfDay - previous.minuteOfDay) * fraction
-          }
+                  if (x > last.x) {
+                      if (x - last.x > lastGap) return null
+                      val previous = sorted[sorted.lastIndex - 1]
+                      val fraction = (x - previous.x).toDouble() /
+                          (last.x - previous.x)
+                      return previous.minuteOfDay +
+                          (last.minuteOfDay - previous.minuteOfDay) * fraction
+                  }
 
-          for (i in 0 until sorted.lastIndex) {"""
+                  for (i in 0 until sorted.lastIndex) {"""
 
-          if old not in axis:
-              raise SystemExit("TimeAxis anchor not found. No changes made.")
+          axis, count = re.subn(pattern, lambda _: replacement, axis, count=1)
 
-          axis = axis.replace(old, new, 1)
+          if count != 1:
+              raise SystemExit(
+                  "ERROR: TimeAxis code pattern not found exactly once. "
+                  "No source files were changed."
+              )
 
-          if "centerX > screenWidth * 0.92" not in axis:
-              raise SystemExit("Time label filter anchor not found. No changes made.")
+          old_filter = "centerX > screenWidth * 0.92"
+          if old_filter not in axis:
+              raise SystemExit(
+                  "ERROR: Time label filter not found. No source files were changed."
+              )
 
           axis = axis.replace(
-              "centerX > screenWidth * 0.92",
+              old_filter,
               "centerX > screenWidth * 0.99",
               1
           )
@@ -89,16 +99,19 @@ jobs:
 
           old_field = """    private val candleHistory = ScreenCandleHistory()
 
-    private var lastFrameTime = 0L"""
+              private var lastFrameTime = 0L"""
 
           new_field = """    private val candleHistory = ScreenCandleHistory()
-    private val signalNotifier by lazy { SignalNotifier(this) }
-    private var lastNotifiedSignalCloseTime = 0L
+              private val signalNotifier by lazy { SignalNotifier(this) }
+              private var lastNotifiedSignalCloseTime = 0L
 
-    private var lastFrameTime = 0L"""
+              private var lastFrameTime = 0L"""
 
           if old_field not in service:
-              raise SystemExit("Service field anchor not found. No changes made.")
+              raise SystemExit(
+                  "ERROR: ScreenCaptureService field pattern not found. "
+                  "No source files were changed."
+              )
 
           service = service.replace(old_field, new_field, 1)
 
@@ -154,14 +167,19 @@ jobs:
                                                 // 4. Prepare diagnostic status"""
 
           if old_count not in service:
-              raise SystemExit("Closed candle anchor not found. No changes made.")
+              raise SystemExit(
+                  "ERROR: Closed-candle insertion point not found. "
+                  "No source files were changed."
+              )
 
           service = service.replace(old_count, new_count, 1)
 
+          # Write files only after every required pattern was verified.
           axis_file.write_text(axis)
           service_file.write_text(service)
 
-          print("M1 repair changes applied.")
+          print("SUCCESS: M1 repair changes applied.")
+
           PY
 
       - name: Build APK

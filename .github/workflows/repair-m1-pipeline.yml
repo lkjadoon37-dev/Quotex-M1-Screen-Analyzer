@@ -1,0 +1,325 @@
+
+name: Repair Quotex M1 Signal Pipeline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Patch existing Kotlin files safely
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              source = p.read_text()
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f"STOP: {label}: expected one match, found {count}. No blind edit."
+                  )
+              p.write_text(source.replace(old, new, 1))
+              print("Patched:", label)
+
+          service = "app/src/main/java/com/example/quotexm1analyzer/ScreenCaptureService.kt"
+          activity = "app/src/main/java/com/example/quotexm1analyzer/MainActivity.kt"
+
+          replace_once(
+              service,
+              '''        const val EXTRA_CLOSED_CANDLE_COUNT = "closed_candle_count"''',
+              '''        const val EXTRA_CLOSED_CANDLE_COUNT = "closed_candle_count"
+                  const val EXTRA_SIGNAL = "signal"
+                  const val EXTRA_SIGNAL_STRENGTH = "signal_strength"
+                  const val EXTRA_SIGNAL_REASON = "signal_reason"''',
+              "signal broadcast constants"
+          )
+
+          replace_once(
+              service,
+              '''    private val candleHistory = ScreenCandleHistory()
+
+              private var lastFrameTime = 0L''',
+              '''    private val candleHistory = ScreenCandleHistory()
+              private val signalNotifier by lazy { SignalNotifier(this) }
+              private var lastNotifiedCloseTime = 0L
+
+              private var lastFrameTime = 0L''',
+              "signal notifier fields"
+          )
+
+          replace_once(
+              service,
+              '''                                                latestClosedCandleCount =
+                                                      candleHistory.getCount()
+
+                                                  // 4. Prepare diagnostic status
+                                                  val combinedMessage =
+                                                      analysis.message +
+                                                          " | Time: " +
+                                                          timeAxis.message +
+                                                          " | New closed: " +
+                                                          newlyClosed.size +
+                                                          " | History: " +
+                                                          latestClosedCandleCount''',
+              '''                                                latestClosedCandleCount =
+                                                      candleHistory.getCount()
+
+                                                  // Analyze only 35 consecutive closed M1 candles.
+                                                  val closedCandles =
+                                                      candleHistory.getClosedCandles()
+                                                          .sortedBy { it.closeTimeMillis }
+
+                                                  val recentCandles =
+                                                      closedCandles.takeLast(35)
+
+                                                  val hasContinuousHistory =
+                                                      recentCandles.size == 35 &&
+                                                          recentCandles.zipWithNext().all { pair ->
+                                                              pair.second.closeTimeMillis -
+                                                                  pair.first.closeTimeMillis == 60_000L
+                                                          }
+
+                                                  val signalResult =
+                                                      if (hasContinuousHistory) {
+                                                          AnalysisEngine.analyze(closedCandles)
+                                                      } else {
+                                                          AnalysisEngine.analyze(emptyList())
+                                                      }
+
+                                                  val signalReason =
+                                                      when {
+                                                          closedCandles.size < 35 ->
+                                                              "35 closed M1 candles required: ${closedCandles.size}/35."
+                                                          !hasContinuousHistory ->
+                                                              "M1 candle history has gaps. WAIT for 35 consecutive candles."
+                                                          else ->
+                                                              signalResult.explanation.joinToString(" ")
+                                                      }
+
+                                                  val latestClosedTime =
+                                                      closedCandles.lastOrNull()?.closeTimeMillis ?: 0L
+
+                                                  if (newlyClosed.isNotEmpty() &&
+                                                      latestClosedTime > lastNotifiedCloseTime
+                                                  ) {
+                                                      if (hasContinuousHistory &&
+                                                          signalResult.signal != Signal.WAIT
+                                                      ) {
+                                                          signalNotifier.showSignal(
+                                                              signal = signalResult.signal.name,
+                                                              strength = signalResult.strength,
+                                                              reason = signalReason
+                                                          )
+                                                      }
+
+                                                      lastNotifiedCloseTime = latestClosedTime
+                                                  }
+
+                                                  // Include the signal in the screen status.
+                                                  val combinedMessage =
+                                                      analysis.message +
+                                                          " | Time: " +
+                                                          timeAxis.message +
+                                                          " | New closed: " +
+                                                          newlyClosed.size +
+                                                          " | History: " +
+                                                          latestClosedCandleCount +
+                                                          " | M1 Signal: " +
+                                                          signalResult.signal.name +
+                                                          " | Setup Strength: " +
+                                                          signalResult.strength +
+                                                          "% | " +
+                                                          signalReason''',
+              "connect candle history to analysis engine"
+          )
+
+          replace_once(
+              service,
+              '''                                                        putExtra(
+                                                              EXTRA_CLOSED_CANDLE_COUNT,
+                                                              latestClosedCandleCount
+                                                          )''',
+              '''                                                        putExtra(
+                                                              EXTRA_CLOSED_CANDLE_COUNT,
+                                                              latestClosedCandleCount
+                                                          )
+
+                                                          putExtra(EXTRA_SIGNAL, signalResult.signal.name)
+                                                          putExtra(EXTRA_SIGNAL_STRENGTH, signalResult.strength)
+                                                          putExtra(EXTRA_SIGNAL_REASON, signalReason)''',
+              "send signal to activity"
+          )
+
+          replace_once(
+              service,
+              '''        candleHistory.clear()
+
+              latestFrameWidth = 0''',
+              '''        candleHistory.clear()
+              lastNotifiedCloseTime = 0L
+
+              latestFrameWidth = 0''',
+              "reset signal state on capture stop"
+          )
+
+          replace_once(
+              activity,
+              '''import android.app.Activity
+              import android.content.BroadcastReceiver''',
+              '''import android.Manifest
+              import android.app.Activity
+              import android.content.BroadcastReceiver''',
+              "notification permission import"
+          )
+
+          replace_once(
+              activity,
+              '''import android.content.IntentFilter
+              import android.media.projection.MediaProjectionManager''',
+              '''import android.content.IntentFilter
+              import android.content.pm.PackageManager
+              import android.media.projection.MediaProjectionManager''',
+              "package manager import"
+          )
+
+          replace_once(
+              activity,
+              '''        addButton("SCREEN CAPTURE SHURU KAREIN") {
+                  startScreenCapture()
+              }
+
+              addButton("CAPTURE BAND KAREIN") {''',
+              '''        addButton("SIGNAL NOTIFICATIONS ENABLE KAREIN") {
+                  requestSignalNotificationPermission()
+              }
+
+              addButton("SCREEN CAPTURE SHURU KAREIN") {
+                  startScreenCapture()
+              }
+
+              addButton("CAPTURE BAND KAREIN") {''',
+              "notification permission button"
+          )
+
+          replace_once(
+              activity,
+              '''                        val scalePoints = intent.getIntExtra(
+                              ScreenCaptureService.EXTRA_SCALE_POINTS, 0
+                          )
+
+                          analysisInfo.text = buildString {''',
+              '''                        val scalePoints = intent.getIntExtra(
+                              ScreenCaptureService.EXTRA_SCALE_POINTS, 0
+                          )
+
+                          val signal = intent.getStringExtra(
+                              ScreenCaptureService.EXTRA_SIGNAL
+                          ) ?: "WAIT"
+
+                          val strength = intent.getIntExtra(
+                              ScreenCaptureService.EXTRA_SIGNAL_STRENGTH, 0
+                          )
+
+                          val reason = intent.getStringExtra(
+                              ScreenCaptureService.EXTRA_SIGNAL_REASON
+                          ).orEmpty()
+
+                          analysisInfo.text = buildString {''',
+              "read signal broadcast"
+          )
+
+          replace_once(
+              activity,
+              '''                            appendLine(message)
+                              appendLine()
+                              append("Note: Candle timing aur OHLC abhi verify hona baqi hai. Yeh CALL/PUT signal nahi hai.")''',
+              '''                            appendLine(message)
+                              appendLine()
+                              appendLine("M1 SIGNAL: $signal")
+                              appendLine("SETUP STRENGTH: $strength%")
+                              appendLine("Reason: $reason")
+                              appendLine()
+                              append("Strength score win probability nahi hai. 35 continuous closed M1 candles ke baghair WAIT rahega.")''',
+              "display signal on screen"
+          )
+
+          replace_once(
+              activity,
+              '''    private fun startScreenCapture() {
+              try {''',
+              '''    private fun requestSignalNotificationPermission() {
+              if (Build.VERSION.SDK_INT >= 33 &&
+                  checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                      PackageManager.PERMISSION_GRANTED
+              ) {
+                  requestPermissions(
+                      arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                      4102
+                  )
+              } else {
+                  status.text = "Signal notifications enabled."
+              }
+          }
+
+          private fun startScreenCapture() {
+              try {''',
+              "request notification permission"
+          )
+
+          replace_once(
+              activity,
+              '''                appendLine(previousAnalysis)
+                  appendLine()
+                  append("Note: Candle timing aur OHLC abhi verify hona baqi hai. Yeh CALL/PUT signal nahi hai.")''',
+              '''                appendLine(previousAnalysis)
+                  appendLine()
+                  append("Setup strength win probability nahi hai. 35 continuous closed M1 candles ke baghair WAIT rahega.")''',
+              "restore signal status"
+          )
+
+          print("All source patches applied.")
+          PY
+
+      - name: Check patch formatting
+        run: git diff --check
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Commit repaired source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/example/quotexm1analyzer/ScreenCaptureService.kt
+          git add app/src/main/java/com/example/quotexm1analyzer/MainActivity.kt
+          git commit -m "Connect screen candles to M1 signal engine" || echo "No source changes to commit"
+          git push origin HEAD:main
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Quotex-M1-Analyzer-Repaired-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
